@@ -1,8 +1,12 @@
 # SimPolars
 MSFS polars capture application, slightly modified MSFS SimVars example app.
 
-How to use:
+To compile it you need:
+- MS Visual Studio 2019
+- MSFS SDK installed
 
+
+How to use:
 
 1. Launch MSFS
 2. Launch application, polars.simvars file with all required variables will be loaded
@@ -23,3 +27,5 @@ How to use:
 12. Captured data can be saved as JSON file
 
 Additional information and latest updates available at https://msfs.touching.cloud
+
+
