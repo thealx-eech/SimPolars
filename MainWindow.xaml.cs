@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,13 +15,14 @@ namespace Simvars
         int GetUserSimConnectWinEvent();
         void ReceiveSimConnectMessage();
         void SetWindowHandle(IntPtr _hWnd);
+        void LoadFile(string _sFileName);
         void Disconnect();
     }
     public partial class MainWindow : Window
     {
         public MainWindow()
         {
-            this.DataContext = new SimvarsViewModel();
+            this.DataContext = new SimvarsViewModel(this);
 
             InitializeComponent();
         }
@@ -36,6 +39,16 @@ namespace Simvars
             if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
             {
                 oBaseSimConnectWrapper.SetWindowHandle(GetHWinSource().Handle);
+
+                string simvars = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polars.simvars";
+                if (File.Exists(simvars))
+                {
+                    oBaseSimConnectWrapper.LoadFile(simvars);
+                }
+                else
+                {
+                    MessageBox.Show("File 'polars.simvars' not found in folder " + System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location));
+                }
             }
         }
 
@@ -83,6 +96,13 @@ namespace Simvars
             {
                 oContext.SetTickSliderValue((int)oSlider.Value);
             }
+        }
+
+        private void imgLoadEvent(object sender, RoutedEventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog();
+            if (openFileDialog.ShowDialog() == true)
+                graphBgImagePath.Text = openFileDialog.FileName;
         }
     }
 }

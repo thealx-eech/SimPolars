@@ -1,12 +1,19 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 
 using Microsoft.FlightSimulator.SimConnect;
-
+using Newtonsoft.Json;
 
 namespace Simvars
 {
@@ -19,6 +26,22 @@ namespace Simvars
     {
         Dummy = 0
     };
+
+    public class SetValueItem
+    {
+        public SetValueItem(Enum eDef, uint sIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG dEFAULT, object dValue)
+        {
+            DefineID = eDef;
+            ObjectID = sIMCONNECT_OBJECT_ID_USER;
+            Flags = dEFAULT;
+            pDataSet = dValue;
+        }
+
+        public Enum DefineID { get; set; }
+        public uint ObjectID { get; set; }
+        public SIMCONNECT_DATA_SET_FLAG Flags { get; set; }
+        public object pDataSet { get; set; }
+    }
 
     public class SimvarRequest : ObservableObject
     {
@@ -47,6 +70,8 @@ namespace Simvars
 
     public class SimvarsViewModel : BaseViewModel, IBaseSimConnectWrapper
     {
+        public static List<SetValueItem> SetValueItems = new List<SetValueItem>();
+
         #region IBaseSimConnectWrapper implementation
 
         /// User-defined win32 event
@@ -57,6 +82,15 @@ namespace Simvars
 
         /// SimConnect object
         private SimConnect m_oSimConnect = null;
+
+        private bool captureActive = false;
+
+        private Dictionary<string, double> prevVariables = new Dictionary<string, double>();
+        private Dictionary<string, double> currVariables = new Dictionary<string, double>();
+
+        private Dictionary<int, double>[] capturedDataArray = new Dictionary<int, double>[24];
+
+
 
         public bool bConnected
         {
@@ -90,6 +124,8 @@ namespace Simvars
             m_oTimer.Stop();
             bOddTick = false;
 
+            sw.Stop();
+
             if (m_oSimConnect != null)
             {
                 /// Dispose serves the same purpose as SimConnect_Close()
@@ -108,6 +144,14 @@ namespace Simvars
             }
         }
 
+        public void CaptureStop()
+        {
+            Console.WriteLine("CaptureStop");
+
+            sCaptureButtonLabel = "ENABLE DATA CAPTURE";
+
+        }
+
         #endregion
 
         #region UI bindings
@@ -118,6 +162,13 @@ namespace Simvars
             private set { this.SetProperty(ref m_sConnectButtonLabel, value); }
         }
         private string m_sConnectButtonLabel = "Connect";
+
+        public string sCaptureButtonLabel
+        {
+            get { return m_sCaptureButtonLabel; }
+            private set { this.SetProperty(ref m_sCaptureButtonLabel, value); }
+        }
+        private string m_sCaptureButtonLabel = "ENABLE DATA CAPTURE";
 
         public bool bObjectIDSelectionEnabled
         {
@@ -236,22 +287,35 @@ namespace Simvars
 
 
         public BaseCommand cmdToggleConnect { get; private set; }
+        public BaseCommand cmdToggleCapture { get; private set; }
+        public BaseCommand cmdToggleRender { get; private set; }
+        public BaseCommand cmdToggleClear { get; private set; }
+        public BaseCommand cmdToggleLoad { get; private set; }
+        public BaseCommand cmdToggleSave { get; private set; }
         public BaseCommand cmdAddRequest { get; private set; }
         public BaseCommand cmdRemoveSelectedRequest { get; private set; }
         public BaseCommand cmdTrySetValue { get; private set; }
+        public BaseCommand cmdSetValuePerm { get; private set; }
         public BaseCommand cmdLoadFiles { get; private set; }
         public BaseCommand cmdSaveFile { get; private set; }
+        public BaseCommand cmdInsertThermal { get; private set; }
+
+        public MainWindow parent;
 
         #endregion
 
         #region Real time
 
         private DispatcherTimer m_oTimer = new DispatcherTimer();
+        private Stopwatch sw = new Stopwatch();
+        private double swLast = 0;
+        private double swElapsed;
 
         #endregion
 
-        public SimvarsViewModel()
+        public SimvarsViewModel(MainWindow parent)
         {
+            parent = (MainWindow)System.Windows.Application.Current.MainWindow;
             lObjectIDs = new ObservableCollection<uint>();
             lObjectIDs.Add(1);
 
@@ -259,13 +323,20 @@ namespace Simvars
             lErrorMessages = new ObservableCollection<string>();
 
             cmdToggleConnect = new BaseCommand((p) => { ToggleConnect(); });
+            cmdToggleCapture = new BaseCommand((p) => { ToggleCapture(); });
+            cmdToggleRender = new BaseCommand((p) => { ToggleRender(); });
+            cmdToggleClear = new BaseCommand((p) => { ToggleClear(); });
+            cmdToggleLoad = new BaseCommand((p) => { ToggleLoad(); });
+            cmdToggleSave = new BaseCommand((p) => { ToggleSave(); });
             cmdAddRequest = new BaseCommand((p) => { AddRequest(null, null); });
             cmdRemoveSelectedRequest = new BaseCommand((p) => { RemoveSelectedRequest(); });
             cmdTrySetValue = new BaseCommand((p) => { TrySetValue(); });
+            cmdSetValuePerm = new BaseCommand((p) => { SetValuePerm(); });
             cmdLoadFiles = new BaseCommand((p) => { LoadFiles(); });
             cmdSaveFile = new BaseCommand((p) => { SaveFile(false); });
+            cmdInsertThermal = new BaseCommand((p) => { InsertThermal(); });
 
-            m_oTimer.Interval = new TimeSpan(0, 0, 0, 1, 0);
+            m_oTimer.Interval = new TimeSpan(0, 0, 0, 0, 100);
             m_oTimer.Tick += new EventHandler(OnTick);
         }
 
@@ -287,6 +358,8 @@ namespace Simvars
 
                 /// Catch a simobject data request
                 m_oSimConnect.OnRecvSimobjectDataBytype += new SimConnect.RecvSimobjectDataBytypeEventHandler(SimConnect_OnRecvSimobjectDataBytype);
+
+                sw.Start();
             }
             catch (COMException ex)
             {
@@ -335,7 +408,7 @@ namespace Simvars
 
         private void SimConnect_OnRecvSimobjectDataBytype(SimConnect sender, SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE data)
         {
-            Console.WriteLine("SimConnect_OnRecvSimobjectDataBytype");
+            //Console.WriteLine("SimConnect_OnRecvSimobjectDataBytype");
 
             uint iRequest = data.dwRequestID;
             uint iObject = data.dwObjectID;
@@ -351,6 +424,9 @@ namespace Simvars
                     oSimvarRequest.dValue = dValue;
                     oSimvarRequest.bPending = false;
                     oSimvarRequest.bStillPending = false;
+
+                    // STORE VALUE
+                    currVariables[oSimvarRequest.sName] = dValue;
                 }
             }
         }
@@ -359,10 +435,11 @@ namespace Simvars
         // See SimConnect.RequestDataOnSimObject
         private void OnTick(object sender, EventArgs e)
         {
-            Console.WriteLine("OnTick");
-
             bOddTick = !bOddTick;
+            swElapsed = (sw.Elapsed.TotalMilliseconds - swLast) / 1000;
+            swLast = sw.Elapsed.TotalMilliseconds;
 
+            // READ DATA
             foreach (SimvarRequest oSimvarRequest in lSimvarRequests)
             {
                 if (!oSimvarRequest.bPending)
@@ -375,8 +452,66 @@ namespace Simvars
                     oSimvarRequest.bStillPending = true;
                 }
             }
+
+            // WRITE DATE
+            if (SetValueItems.Count > 0)
+            {
+                //Console.WriteLine("Updating " + SetValueItems.Count + " variables");
+                foreach (SetValueItem itm in SetValueItems)
+                {
+                    m_oSimConnect.SetDataOnSimObject(itm.DefineID, itm.ObjectID, itm.Flags, itm.pDataSet);
+                }
+            }
+
+            // AERODYNAMICS CAPTURE
+            if (captureActive && prevVariables.Count > 0)
+            {
+                prevVariables.TryGetValue("AIRSPEED TRUE", out double airspeedOld);
+                currVariables.TryGetValue("AIRSPEED TRUE", out double airspeed);
+                prevVariables.TryGetValue("PLANE ALTITUDE", out double altitudeOld);
+                currVariables.TryGetValue("PLANE ALTITUDE", out double altitude);
+                currVariables.TryGetValue("FLAPS HANDLE INDEX", out double flaps);
+
+                //Console.WriteLine(airspeedOld + " " + airspeed + " / " + altitudeOld + " " + altitude + " : " + swElapsed);
+
+                if (airspeed != 0 && airspeedOld != 0 && altitude != 0 && altitudeOld != 0)
+                {
+                    //Console.Write("Capture " + (int)airspeed + " / " + sink);
+                    if (capturedDataArray[(int)flaps] == null)
+                        capturedDataArray[(int)flaps] = new Dictionary<int, double>();
+
+                    double te = getTeValue(altitudeOld, altitude, airspeedOld, airspeed, swElapsed);
+
+                    capturedDataArray[(int)flaps][(int)(airspeed)] = capturedDataArray[(int)flaps].ContainsKey((int)airspeed)
+                        ? 0.9 * capturedDataArray[(int)flaps][(int)airspeed] + 0.1 * te : te;
+                }
+
+                ToggleRender();
+            }
+
+            // SAVE PREVIOUS STATE
+            if (currVariables.Count > 0)
+            {
+                prevVariables = new Dictionary<string, double>(currVariables);
+            }
         }
 
+        //(h2 - h1) / t + (v2^2 - v1^2) / (2 * t * g)
+        private double getTeValue(double altitudeOld, double altitude, double airspeedOld, double airspeed, double time)
+        {
+            return (altitude - altitudeOld) / time + (Math.Pow(airspeed, 2) - Math.Pow(airspeedOld, 2)) / (2 * time * 9.80665);
+        }
+
+        private SimvarRequest CreateSimvarRequest(string name, string unit)
+        {
+            return new SimvarRequest
+            {
+                eDef = (DEFINITION)m_iCurrentDefinition,
+                eRequest = (REQUEST)m_iCurrentRequest,
+                sName = name,
+                sUnits = unit
+            };
+        }
         private void ToggleConnect()
         {
             if (m_oSimConnect == null)
@@ -395,6 +530,192 @@ namespace Simvars
                 Disconnect();
             }
         }
+        private void ToggleCapture()
+        {
+            if (m_oSimConnect != null || captureActive == true)
+            {
+                if (captureActive == true) // DISABLE
+                {
+                    captureActive = false;
+                    sCaptureButtonLabel = "ENABLE DATA CAPTURE";
+
+                }
+                else // ENABLE
+                {
+                    sSetValue = "0";
+                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE PITCH DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE BANK DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("VELOCITY BODY Z"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)200); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("FUEL TANK CENTER LEVEL:1"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+
+                    captureActive = true;
+                    sCaptureButtonLabel = "DISABLE DATA CAPTURE";
+                }
+            }
+        }
+
+        private DEFINITION getSimvarId(string name)
+        {
+            parent = (MainWindow)System.Windows.Application.Current.MainWindow;
+
+            foreach (SimvarRequest request in lSimvarRequests)
+            {
+                Console.WriteLine("Comapre " + request.sName + " and " + name);
+                if (request.sName == name)
+                {
+                    Console.WriteLine("Simvar " + request.sName + " ID: " + request.eDef);
+                    return request.eDef;
+                }
+            }
+
+            return (DEFINITION) (-1);
+        }
+        private void ToggleClear()
+        {
+            if (MessageBox.Show("You are goind to reset captured aerodynamics data", "Warning", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            {
+                capturedDataArray = new Dictionary<int, double>[24];
+                parent = (MainWindow)System.Windows.Application.Current.MainWindow;
+                parent.captureCanvas.Children.Clear();
+                parent.captureLabels.Children.Clear();
+            }
+        }
+        private void ToggleRender()
+        {
+            parent = (MainWindow)System.Windows.Application.Current.MainWindow;
+            parent.captureCanvas.Children.Clear();
+            parent.captureCanvas.Focus();
+            parent.captureLabels.Children.Clear();
+
+            // RENDER GRID
+            if (double.TryParse((parent).graphXstart.Text, out double valXstart) &&
+                double.TryParse((parent).graphXend.Text, out double valXend) &&
+                double.TryParse((parent).graphYstart.Text, out double valYstart) &&
+                double.TryParse((parent).graphYend.Text, out double valYend))
+            {
+                currVariables.TryGetValue("TOTAL WEIGHT", out double totalWeight);
+                currVariables.TryGetValue("AIRSPEED TRUE", out double airspeedTrue);
+                if (captureActive == true && airspeedTrue * 3.6 < valXstart) // DISABLE CAPTURE
+                {
+                    ToggleCapture();
+                }
+
+                double canvasWidth = parent.captureCanvas.Width;
+                double canvasHeight = parent.captureCanvas.Height;
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 0, 1, canvasWidth, canvasHeight, 2));
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 1, 0, canvasWidth, canvasHeight, 2));
+
+                double unitX = 1 / (valXend - valXstart);
+                double unitY = 1 / (valYend - valYstart);
+
+                // BACKGROUND IMAGE
+                if (!string.IsNullOrEmpty(parent.graphBgImagePath.Text) && File.Exists(parent.graphBgImagePath.Text))
+                {
+                    Image img = new Image();
+                    ImageBrush ib = new ImageBrush();
+                    ib.Stretch = Stretch.Fill;
+                    ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
+                    parent.captureCanvas.Background = ib;
+                }
+
+                // HORIZONTAL SPEED
+                for (double k = Math.Ceiling(valXstart / 10) * 10 - Math.Ceiling(valXstart); k <= valXend - Math.Ceiling(valXstart); k += 10)
+                {
+                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, k * unitX, 0, k * unitX, 1, canvasWidth, canvasHeight, 1));
+                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, k * unitX * canvasWidth, -16, (k + valXstart).ToString());
+                }
+
+                // VERTICAL SPEED
+                for (double k = Math.Ceiling(valYstart) - Math.Ceiling(valYstart); k <= valYend - Math.Ceiling(valYstart); k += 1)
+                {
+                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, 0, k * unitY, 1, k * unitY, canvasWidth, canvasHeight, 1));
+                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, k * unitY * canvasHeight, (k + valYstart).ToString());
+                }
+
+                // CAPTURED VALUES
+                int index = 1;
+                foreach (var capturedData in capturedDataArray) {
+                    if (capturedData != null && capturedData.Count > 0)
+                    {
+                        Color color = Color.FromRgb((byte)(255 - index % 4 * 127), (byte)(255 - (index+1) % 3 * 127), (byte)(255 - (index+2) % 3 * 127));
+                        //Console.WriteLine(color.ToString());
+                        parent.captureLabels.Children.Add(getTextLabel(color, "Flaps position #" + (index - 1) + " " + (int)totalWeight + "kg"));
+
+                        foreach (var capturedValue in capturedData)
+                        {
+                            double airspeed = capturedValue.Key * 3.6;
+                            double te = capturedValue.Value;
+                            if (airspeed >= valXstart && airspeed <= valXend && (-te) >= valYstart && (-te) <= valYend)
+                            {
+                                parent.captureCanvas.Children.Add(getGraphLine(color, (airspeed + 0.01 - Math.Ceiling(valXstart)) * unitX, (-te + 0.02 - Math.Ceiling(valYstart)) * unitY,
+                                    (airspeed - 0.01 - Math.Ceiling(valXstart)) * unitX, (-te - 0.02 - Math.Ceiling(valYstart)) * unitY, canvasWidth, canvasHeight, 3));
+                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling(valXstart)) * unitX + " " + (-te - Math.Ceiling(valYstart)) * unitY);
+                            }
+                        }
+                    }
+                    index++;
+                }
+
+
+            }
+        }
+
+        private void getCanvasTextLabel(Canvas cv, Color color, double x1, double y1, string text)
+        {
+            TextBlock label = new TextBlock();
+            label.Foreground  = new SolidColorBrush(color);
+            label.Text = text;
+            cv.Children.Add(label);
+
+            Canvas.SetLeft(label, x1);
+            Canvas.SetTop(label, y1);
+        }
+
+        private TextBlock getTextLabel(Color color, string text)
+        {
+            TextBlock label = new TextBlock();
+            label.Foreground = new SolidColorBrush(color);
+            label.Text = text;
+
+            return label;
+        }
+
+        private Line getGraphLine(Color color, double x1, double y1, double x2, double y2, double width, double height, int thickness = 1)
+        {
+            Line line = new Line();
+            line.Stroke = new SolidColorBrush(color);
+            line.StrokeThickness = thickness;
+            line.X1 = x1 * width;
+            line.Y1 = height - height * (1 - y1);
+            line.X2 = x2 * width;
+            line.Y2 = height - height * (1 - y2);
+
+            return line;
+        }
+
+        private void ToggleLoad()
+        {
+
+        }
+
+        private void ToggleSave()
+        {
+            int index = 0;
+            foreach (var capturedData in capturedDataArray)
+            {
+                if (capturedData != null && capturedData.Count > 0)
+                {
+                    try
+                    {
+                        File.WriteAllText(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\flaps"+index+".json", JsonConvert.SerializeObject(capturedData));
+                    }
+                    catch { }
+                }
+
+                index++;
+            }
+        }
+
 
         private void ClearResquestsPendingState()
         {
@@ -423,9 +744,9 @@ namespace Simvars
             }
         }
 
-        private void AddRequest(string _sOverrideSimvarRequest, string _sOverrideUnitRequest)
+        private void AddRequest(string _sOverrideSimvarRequest, string _sOverrideUnitRequest, double value = 0)
         {
-            Console.WriteLine("AddRequest");
+            Console.WriteLine("AddRequest " + _sOverrideSimvarRequest + " " + _sOverrideUnitRequest + " :" + value);
 
             string sNewSimvarRequest = _sOverrideSimvarRequest != null ? _sOverrideSimvarRequest : ((m_iIndexRequest == 0) ? m_sSimvarRequest : (m_sSimvarRequest + ":" + m_iIndexRequest));
             string sNewUnitRequest = _sOverrideUnitRequest != null ? _sOverrideUnitRequest : m_sUnitRequest;
@@ -435,7 +756,8 @@ namespace Simvars
                 eDef = (DEFINITION)m_iCurrentDefinition,
                 eRequest = (REQUEST)m_iCurrentRequest,
                 sName = sNewSimvarRequest,
-                sUnits = sNewUnitRequest
+                sUnits = sNewUnitRequest,
+                dValue = value
             };
 
             oSimvarRequest.bPending = !RegisterToSimConnect(oSimvarRequest);
@@ -454,17 +776,29 @@ namespace Simvars
 
         private void TrySetValue()
         {
-            Console.WriteLine("TrySetValue");
+            Console.WriteLine("TrySetValue: " + m_oSelectedSimvarRequest.eDef + " " + m_sSetValue);
 
             if (m_oSelectedSimvarRequest != null && m_sSetValue != null)
             {
-                double dValue = 0.0;
-                if (double.TryParse(m_sSetValue, NumberStyles.Any, null, out dValue))
+                if (double.TryParse(m_sSetValue, NumberStyles.Any, null, out double dValue))
                 {
                     m_oSimConnect.SetDataOnSimObject(m_oSelectedSimvarRequest.eDef, SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, dValue);
                 }
             }
         }
+        private void SetValuePerm()
+        {
+            Console.WriteLine("SetValuePerm");
+			if (m_oSelectedSimvarRequest != null && m_sSetValue != null)            {
+                if (double.TryParse(m_sSetValue, NumberStyles.Any, null, out double dValue))
+                {
+                    SetValueItems.Add(new SetValueItem(m_oSelectedSimvarRequest.eDef, SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, dValue));
+                    //m_oSimConnect.SetDataOnSimObject(m_oSelectedSimvarRequest.eDef, SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, dValue);
+                }
+            }
+
+        }
+
 
         private void LoadFiles()
         {
@@ -480,7 +814,7 @@ namespace Simvars
             }
         }
 
-        private void LoadFile(string _sFileName)
+        public void LoadFile(string _sFileName)
         {
             string[] aLines = System.IO.File.ReadAllLines(_sFileName);
             for (uint i = 0; i < aLines.Length; ++i)
@@ -542,6 +876,14 @@ namespace Simvars
         public void SetTickSliderValue(int _iValue)
         {
             m_oTimer.Interval = new TimeSpan(0, 0, 0, 0, (int)(_iValue));
+        }
+
+        public void InsertThermal()
+        {
+            if (m_oSimConnect != null)
+            {
+                //m_oSimConnect.WeatherCreateThermal();
+            }
         }
     }
 }
