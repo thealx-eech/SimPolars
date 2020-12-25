@@ -310,6 +310,7 @@ namespace Simvars
         private Stopwatch sw = new Stopwatch();
         private double swLast = 0;
         private double swElapsed;
+        private bool? variableTimer = false;
 
         #endregion
 
@@ -474,7 +475,7 @@ namespace Simvars
 
                 //Console.WriteLine(airspeedOld + " " + airspeed + " / " + altitudeOld + " " + altitude + " : " + swElapsed);
 
-                if (airspeed != 0 && airspeedOld != 0 && altitude != 0 && altitudeOld != 0)
+                if (airspeed != 0 && airspeedOld != 0 && altitude != 0 && altitudeOld != 0 && swElapsed > 0)
                 {
                     //Console.Write("Capture " + (int)airspeed + " / " + sink);
                     if (capturedDataArray[(int)flaps] == null)
@@ -487,9 +488,13 @@ namespace Simvars
                 }
 
                 ToggleRender();
-            }
 
-            // SAVE PREVIOUS STATE
+                if (variableTimer == true && swElapsed > 0)
+                {
+                    SetVariableTiming(airspeed, airspeedOld, swElapsed);
+                }
+            }
+                // SAVE PREVIOUS STATE
             if (currVariables.Count > 0)
             {
                 prevVariables = new Dictionary<string, double>(currVariables);
@@ -572,13 +577,15 @@ namespace Simvars
         }
         private void ToggleClear()
         {
-            if (MessageBox.Show("You are goind to reset captured aerodynamics data", "Warning", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            if (currVariables.TryGetValue("FLAPS HANDLE INDEX", out double flaps)) // CLEAR FLAP DATA ONLY
+            {
+                capturedDataArray[(int)flaps] = new Dictionary<int, double>();
+            } else // CLEAR ALL
             {
                 capturedDataArray = new Dictionary<int, double>[24];
-                parent = (MainWindow)System.Windows.Application.Current.MainWindow;
-                parent.captureCanvas.Children.Clear();
-                parent.captureLabels.Children.Clear();
             }
+
+            ToggleRender();
         }
         private void ToggleRender()
         {
@@ -595,10 +602,11 @@ namespace Simvars
             {
                 currVariables.TryGetValue("TOTAL WEIGHT", out double totalWeight);
                 currVariables.TryGetValue("AIRSPEED TRUE", out double airspeedTrue);
-                if (captureActive == true && airspeedTrue * 3.6 < valXstart) // DISABLE CAPTURE
+                
+                /*if (captureActive == true && airspeedTrue * 3.6 < valXstart) // DISABLE CAPTURE
                 {
                     ToggleCapture();
-                }
+                }*/
 
                 double canvasWidth = parent.captureCanvas.Width;
                 double canvasHeight = parent.captureCanvas.Height;
@@ -878,6 +886,33 @@ namespace Simvars
             m_oTimer.Interval = new TimeSpan(0, 0, 0, 0, (int)(_iValue));
         }
 
+        public void SetTickMode(bool? variable)
+        {
+            variableTimer = variable;
+
+            if (variableTimer == false)
+            {
+                parent = (MainWindow)System.Windows.Application.Current.MainWindow;
+                SetTickSliderValue((int)(parent.sl_Tick.Value));
+            }
+        }
+
+        public void SetVariableTiming(double airspeed, double airspeedOld, double interval)
+        {
+            double accel = Math.Abs(airspeed - airspeedOld) / interval;
+            accel = Math.Max(accel, 0.05);
+            accel = Math.Min(accel, 0.5);
+            double multiplier = 1.0;
+            int timer = 500;
+
+            if (Math.Abs(airspeed) < 30)
+                multiplier = 1 - Math.Abs(airspeed) / 30;
+
+            timer = (int)(1000 * (1.1 - 2 * accel * multiplier));
+
+            Console.WriteLine("Variable timer: " + timer + " acceleration: " + accel);
+            SetTickSliderValue(timer);
+        }
         public void InsertThermal()
         {
             if (m_oSimConnect != null)

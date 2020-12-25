@@ -1,10 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace Simvars
 {
@@ -13,5 +9,15 @@ namespace Simvars
     /// </summary>
     public partial class App : Application
     {
+        void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+        {
+            // Process unhandled exception do stuff below
+
+            // Prevent default unhandled exception processing
+            e.Handled = true;
+            MessageBox.Show(e.Exception.Message + Environment.NewLine + e.Exception.InnerException.Message);
+            
+        }
+
     }
 }

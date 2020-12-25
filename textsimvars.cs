@@ -8,6 +8,7 @@ namespace SimUtils
         static public readonly string[] Names = new string[]
         {
 			"NONE",
+			"ABSOLUTE TIME",
 			"ANGLE OF ATTACK INDICATOR",
 			"GUN AMMO",
 			"CANNON AMMO",

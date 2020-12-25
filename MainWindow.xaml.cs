@@ -98,6 +98,15 @@ namespace Simvars
             }
         }
 
+        private void Tick_Mode(object sender, RoutedEventArgs e)
+        {
+            if (sender is CheckBox chk && this.DataContext is SimvarsViewModel oContext)
+            {
+                oContext.SetTickMode(chk.IsChecked);
+            }
+
+        }
+
         private void imgLoadEvent(object sender, RoutedEventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
