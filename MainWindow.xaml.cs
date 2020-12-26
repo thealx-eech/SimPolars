@@ -17,6 +17,7 @@ namespace Simvars
         void SetWindowHandle(IntPtr _hWnd);
         void LoadFile(string _sFileName);
         void Disconnect();
+        void AddFlightDataRequest();
     }
     public partial class MainWindow : Window
     {
@@ -40,7 +41,9 @@ namespace Simvars
             {
                 oBaseSimConnectWrapper.SetWindowHandle(GetHWinSource().Handle);
 
-                string simvars = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polars.simvars";
+                oBaseSimConnectWrapper.AddFlightDataRequest();
+
+                /*string simvars = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polars.simvars";
                 if (File.Exists(simvars))
                 {
                     oBaseSimConnectWrapper.LoadFile(simvars);
@@ -48,7 +51,7 @@ namespace Simvars
                 else
                 {
                     MessageBox.Show("File 'polars.simvars' not found in folder " + System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location));
-                }
+                }*/
             }
         }
 

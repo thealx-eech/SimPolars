@@ -17,6 +17,30 @@ using Newtonsoft.Json;
 
 namespace Simvars
 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct PlaneInfoResponse
+    {
+        public double AbsoluteTime;
+        public double Altitude;
+        public double AirspeedTrue;
+        public double VerticalSpeed;
+        public double Flaps;
+        public double Weight;
+    };
+
+    public class FsDataReceivedEventArgs : EventArgs
+    {
+        /// <summary>
+        /// The request id of the received data.
+        /// </summary>
+        public uint RequestId { get; set; }
+
+        /// <summary>
+        /// The data that was received.
+        /// </summary>
+        public object Data { get; set; }
+    }
+
     public enum DEFINITION
     {
         Dummy = 0
@@ -70,6 +94,11 @@ namespace Simvars
 
     public class SimvarsViewModel : BaseViewModel, IBaseSimConnectWrapper
     {
+        private static PlaneInfoResponse _planeInfoResponse;
+        private static PlaneInfoResponse _planeInfoResponseOld;
+
+        public event EventHandler<FsDataReceivedEventArgs> FsDataReceived;
+
         public static List<SetValueItem> SetValueItems = new List<SetValueItem>();
 
         #region IBaseSimConnectWrapper implementation
@@ -85,12 +114,7 @@ namespace Simvars
 
         private bool captureActive = false;
 
-        private Dictionary<string, double> prevVariables = new Dictionary<string, double>();
-        private Dictionary<string, double> currVariables = new Dictionary<string, double>();
-
         private Dictionary<int, double>[] capturedDataArray = new Dictionary<int, double>[24];
-
-
 
         public bool bConnected
         {
@@ -308,8 +332,7 @@ namespace Simvars
 
         private DispatcherTimer m_oTimer = new DispatcherTimer();
         private Stopwatch sw = new Stopwatch();
-        private double swLast = 0;
-        private double swElapsed;
+        private double AbsoluteTimeDelta = 0;
         private bool? variableTimer = false;
 
         #endregion
@@ -359,6 +382,7 @@ namespace Simvars
 
                 /// Catch a simobject data request
                 m_oSimConnect.OnRecvSimobjectDataBytype += new SimConnect.RecvSimobjectDataBytypeEventHandler(SimConnect_OnRecvSimobjectDataBytype);
+                FsDataReceived += HandleReceivedFsData;
 
                 sw.Start();
             }
@@ -381,13 +405,57 @@ namespace Simvars
             {
                 if (oSimvarRequest.bPending)
                 {
-                    oSimvarRequest.bPending = !RegisterToSimConnect(oSimvarRequest);
-                    oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+                    if (oSimvarRequest.eDef == 0)
+                    {
+                        oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>(oSimvarRequest.eDef);
+                        oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+                    }
+                    else
+                    {
+                        oSimvarRequest.bPending = !RegisterToSimConnect(oSimvarRequest);
+                        oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+                    }
                 }
             }
 
             m_oTimer.Start();
             bOddTick = false;
+        }
+
+        
+        private void HandleReceivedFsData(object sender, FsDataReceivedEventArgs e)
+        {
+            try
+            {
+                //Console.WriteLine("Received request #" + e.RequestId + " value " + JsonConvert.SerializeObject(e.Data, Formatting.Indented));
+
+                if (e.RequestId == 0) // FLIGHT DATA
+                {
+                    _planeInfoResponseOld = _planeInfoResponse;
+                    _planeInfoResponse = (PlaneInfoResponse)e.Data;
+                    lSimvarRequests[0].bPending = false;
+                    lSimvarRequests[0].bStillPending = false;
+                }
+                else // CUSTOM VARS
+                {
+                    foreach (SimvarRequest oSimvarRequest in lSimvarRequests)
+                    {
+                        if (e.RequestId == (uint)oSimvarRequest.eRequest)
+                        {
+                            double dValue = (double)e.Data;
+                            oSimvarRequest.dValue = dValue;
+
+                            oSimvarRequest.bPending = false;
+                            oSimvarRequest.bStillPending = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Could not handle received FS data: " + ex);
+            }
         }
 
         /// The case where the user closes game
@@ -409,52 +477,40 @@ namespace Simvars
 
         private void SimConnect_OnRecvSimobjectDataBytype(SimConnect sender, SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE data)
         {
-            //Console.WriteLine("SimConnect_OnRecvSimobjectDataBytype");
-
-            uint iRequest = data.dwRequestID;
-            uint iObject = data.dwObjectID;
-            if (!lObjectIDs.Contains(iObject))
+            FsDataReceived?.Invoke(this, new FsDataReceivedEventArgs()
             {
-                lObjectIDs.Add(iObject);
-            }
-            foreach (SimvarRequest oSimvarRequest in lSimvarRequests)
-            {
-                if (iRequest == (uint)oSimvarRequest.eRequest && (!bObjectIDSelectionEnabled || iObject == m_iObjectIdRequest))
-                {
-                    double dValue = (double)data.dwData[0];
-                    oSimvarRequest.dValue = dValue;
-                    oSimvarRequest.bPending = false;
-                    oSimvarRequest.bStillPending = false;
-
-                    // STORE VALUE
-                    currVariables[oSimvarRequest.sName] = dValue;
-                }
-            }
+                RequestId = data.dwRequestID,
+                Data = data.dwData[0]
+            });
         }
-
-        // May not be the best way to achive regular requests.
         // See SimConnect.RequestDataOnSimObject
         private void OnTick(object sender, EventArgs e)
         {
             bOddTick = !bOddTick;
-            swElapsed = (sw.Elapsed.TotalMilliseconds - swLast) / 1000;
-            swLast = sw.Elapsed.TotalMilliseconds;
+            if (_planeInfoResponse.AbsoluteTime != 0 && _planeInfoResponseOld.AbsoluteTime != 0)
+            {
+                AbsoluteTimeDelta = _planeInfoResponse.AbsoluteTime - _planeInfoResponseOld.AbsoluteTime;
+            }
 
-            // READ DATA
+            //Console.WriteLine("READING DATA");
+
             foreach (SimvarRequest oSimvarRequest in lSimvarRequests)
             {
                 if (!oSimvarRequest.bPending)
                 {
+                    //Console.WriteLine("Send request for #" + oSimvarRequest.eDef);
                     m_oSimConnect?.RequestDataOnSimObjectType(oSimvarRequest.eRequest, oSimvarRequest.eDef, 0, m_eSimObjectType);
                     oSimvarRequest.bPending = true;
                 }
                 else
                 {
+                    //Console.WriteLine("Still waiting respond for #" + oSimvarRequest.eDef);
                     oSimvarRequest.bStillPending = true;
                 }
             }
 
-            // WRITE DATE
+            //Console.WriteLine("WRITING DATA");
+
             if (SetValueItems.Count > 0)
             {
                 //Console.WriteLine("Updating " + SetValueItems.Count + " variables");
@@ -464,41 +520,34 @@ namespace Simvars
                 }
             }
 
-            // AERODYNAMICS CAPTURE
-            if (captureActive && prevVariables.Count > 0)
+            //Console.WriteLine("AERODYNAMICS CAPTURE");
+
+            if (captureActive)
             {
-                prevVariables.TryGetValue("AIRSPEED TRUE", out double airspeedOld);
-                currVariables.TryGetValue("AIRSPEED TRUE", out double airspeed);
-                prevVariables.TryGetValue("PLANE ALTITUDE", out double altitudeOld);
-                currVariables.TryGetValue("PLANE ALTITUDE", out double altitude);
-                currVariables.TryGetValue("FLAPS HANDLE INDEX", out double flaps);
+                //Console.WriteLine(_planeInfoResponseOld.AirspeedTrue + " " + _planeInfoResponse.AirspeedTrue + " / " + _planeInfoResponseOld.Altitude + " " + _planeInfoResponse.Altitude + " : " + AbsoluteTimeDelta);
 
-                //Console.WriteLine(airspeedOld + " " + airspeed + " / " + altitudeOld + " " + altitude + " : " + swElapsed);
-
-                if (airspeed != 0 && airspeedOld != 0 && altitude != 0 && altitudeOld != 0 && swElapsed > 0)
+                if (_planeInfoResponse.AirspeedTrue != 0 && _planeInfoResponseOld.AirspeedTrue != 0 && _planeInfoResponse.Altitude != 0 && _planeInfoResponseOld.Altitude != 0 && AbsoluteTimeDelta > 0)
                 {
-                    //Console.Write("Capture " + (int)airspeed + " / " + sink);
-                    if (capturedDataArray[(int)flaps] == null)
-                        capturedDataArray[(int)flaps] = new Dictionary<int, double>();
+                    //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
+                    if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
+                        capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
 
-                    double te = getTeValue(altitudeOld, altitude, airspeedOld, airspeed, swElapsed);
+                    double te = getTeValue(_planeInfoResponseOld.Altitude, _planeInfoResponse.Altitude, _planeInfoResponseOld.AirspeedTrue, _planeInfoResponse.AirspeedTrue, AbsoluteTimeDelta);
 
-                    capturedDataArray[(int)flaps][(int)(airspeed)] = capturedDataArray[(int)flaps].ContainsKey((int)airspeed)
-                        ? 0.9 * capturedDataArray[(int)flaps][(int)airspeed] + 0.1 * te : te;
-                }
+                    capturedDataArray[(int)_planeInfoResponse.Flaps][(int)(_planeInfoResponse.AirspeedTrue)] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey((int)_planeInfoResponse.AirspeedTrue)
+                        ? 0.9 * capturedDataArray[(int)_planeInfoResponse.Flaps][(int)_planeInfoResponse.AirspeedTrue] + 0.1 * te : te;
 
-                ToggleRender();
+                    ToggleRender();
 
-                if (variableTimer == true && swElapsed > 0)
-                {
-                    SetVariableTiming(airspeed, airspeedOld, swElapsed);
+                    if (variableTimer == true)
+                    {
+                        SetVariableTiming(_planeInfoResponse.AirspeedTrue, _planeInfoResponseOld.AirspeedTrue, AbsoluteTimeDelta);
+                    }
                 }
             }
-                // SAVE PREVIOUS STATE
-            if (currVariables.Count > 0)
-            {
-                prevVariables = new Dictionary<string, double>(currVariables);
-            }
+
+
+            //Console.WriteLine("SAVE PREVIOUS STATE");
         }
 
         //(h2 - h1) / t + (v2^2 - v1^2) / (2 * t * g)
@@ -548,10 +597,12 @@ namespace Simvars
                 else // ENABLE
                 {
                     sSetValue = "0";
-                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE PITCH DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
-                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE BANK DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
-                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("VELOCITY BODY Z"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)200); } catch (Exception e) { Console.WriteLine(e.Message); }
-                    try { m_oSimConnect.SetDataOnSimObject(getSimvarId("FUEL TANK CENTER LEVEL:1"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+
+                    // TODO: RESET BASE FLIGHT PARAMETERS
+                    //try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE PITCH DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    //try { m_oSimConnect.SetDataOnSimObject(getSimvarId("PLANE BANK DEGREES"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    //try { m_oSimConnect.SetDataOnSimObject(getSimvarId("VELOCITY BODY Z"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)200); } catch (Exception e) { Console.WriteLine(e.Message); }
+                    //try { m_oSimConnect.SetDataOnSimObject(getSimvarId("FUEL TANK CENTER LEVEL:1"), SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, (object)0); } catch (Exception e) { Console.WriteLine(e.Message); }
 
                     captureActive = true;
                     sCaptureButtonLabel = "DISABLE DATA CAPTURE";
@@ -559,27 +610,11 @@ namespace Simvars
             }
         }
 
-        private DEFINITION getSimvarId(string name)
-        {
-            parent = (MainWindow)System.Windows.Application.Current.MainWindow;
-
-            foreach (SimvarRequest request in lSimvarRequests)
-            {
-                Console.WriteLine("Comapre " + request.sName + " and " + name);
-                if (request.sName == name)
-                {
-                    Console.WriteLine("Simvar " + request.sName + " ID: " + request.eDef);
-                    return request.eDef;
-                }
-            }
-
-            return (DEFINITION) (-1);
-        }
         private void ToggleClear()
         {
-            if (currVariables.TryGetValue("FLAPS HANDLE INDEX", out double flaps)) // CLEAR FLAP DATA ONLY
+            if (_planeInfoResponse.Flaps != 0) // CLEAR FLAP DATA ONLY
             {
-                capturedDataArray[(int)flaps] = new Dictionary<int, double>();
+                capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
             } else // CLEAR ALL
             {
                 capturedDataArray = new Dictionary<int, double>[24];
@@ -600,9 +635,6 @@ namespace Simvars
                 double.TryParse((parent).graphYstart.Text, out double valYstart) &&
                 double.TryParse((parent).graphYend.Text, out double valYend))
             {
-                currVariables.TryGetValue("TOTAL WEIGHT", out double totalWeight);
-                currVariables.TryGetValue("AIRSPEED TRUE", out double airspeedTrue);
-                
                 /*if (captureActive == true && airspeedTrue * 3.6 < valXstart) // DISABLE CAPTURE
                 {
                     ToggleCapture();
@@ -647,7 +679,7 @@ namespace Simvars
                     {
                         Color color = Color.FromRgb((byte)(255 - index % 4 * 127), (byte)(255 - (index+1) % 3 * 127), (byte)(255 - (index+2) % 3 * 127));
                         //Console.WriteLine(color.ToString());
-                        parent.captureLabels.Children.Add(getTextLabel(color, "Flaps position #" + (index - 1) + " " + (int)totalWeight + "kg"));
+                        parent.captureLabels.Children.Add(getTextLabel(color, "Flaps position #" + (index - 1) + " " + (int)_planeInfoResponse.Weight + "kg"));
 
                         foreach (var capturedValue in capturedData)
                         {
@@ -752,9 +784,101 @@ namespace Simvars
             }
         }
 
+        public bool RegisterDataDefinition<T>(Enum id) where T : struct
+        {
+            if (m_oSimConnect != null)
+            {
+                foreach (var item in getFlightDataVariables((DEFINITION)id, (REQUEST)id))
+                {
+                    m_oSimConnect.AddToDataDefinition(id, item.sName, item.sUnits, SIMCONNECT_DATATYPE.FLOAT64, 0.0f, SimConnect.SIMCONNECT_UNUSED);
+                }
+
+                m_oSimConnect.RegisterDataDefineStruct<T>(id);
+
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+
+        private List<SimvarRequest> getFlightDataVariables(DEFINITION definition, REQUEST request)
+        {
+            List<SimvarRequest> oSimvarRequests = new List<SimvarRequest>();
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "ABSOLUTE TIME",
+                    sUnits = "second",
+                    dValue = 0
+                }
+            );
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "PLANE ALTITUDE",
+                    sUnits = "meters",
+                    dValue = 0
+                }
+            );
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "AIRSPEED TRUE",
+                    sUnits = "meters per second",
+                    dValue = 0
+                }
+            );
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "VERTICAL SPEED",
+                    sUnits = "meters per second",
+                    dValue = 0
+                }
+            );
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "FLAPS HANDLE INDEX",
+                    sUnits = "enum",
+                    dValue = 0
+                }
+            );
+
+            oSimvarRequests.Add(
+                new SimvarRequest
+                {
+                    eDef = definition,
+                    eRequest = request,
+                    sName = "TOTAL WEIGHT",
+                    sUnits = "kilogram",
+                    dValue = 0
+                }
+            );
+
+            return oSimvarRequests;
+        }
         private void AddRequest(string _sOverrideSimvarRequest, string _sOverrideUnitRequest, double value = 0)
         {
-            Console.WriteLine("AddRequest " + _sOverrideSimvarRequest + " " + _sOverrideUnitRequest + " :" + value);
+            Console.WriteLine("AddRequest " + _sOverrideSimvarRequest + " " + _sOverrideUnitRequest + " def" + m_iCurrentDefinition + " req" + m_iCurrentRequest);
 
             string sNewSimvarRequest = _sOverrideSimvarRequest != null ? _sOverrideSimvarRequest : ((m_iIndexRequest == 0) ? m_sSimvarRequest : (m_sSimvarRequest + ":" + m_iIndexRequest));
             string sNewUnitRequest = _sOverrideUnitRequest != null ? _sOverrideUnitRequest : m_sUnitRequest;
@@ -772,6 +896,28 @@ namespace Simvars
             oSimvarRequest.bStillPending = oSimvarRequest.bPending;
 
             lSimvarRequests.Add(oSimvarRequest);
+
+            ++m_iCurrentDefinition;
+            ++m_iCurrentRequest;
+        }
+
+        public void AddFlightDataRequest()
+        {
+            SimvarRequest oSimvarRequest = new SimvarRequest
+            {
+                eDef = (DEFINITION)m_iCurrentDefinition,
+                eRequest = (REQUEST)m_iCurrentRequest,
+                sName = "FLIGHT DATA",
+                sUnits = "array",
+                dValue = 0
+            };
+
+            oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>((DEFINITION)m_iCurrentDefinition);
+            oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+
+            lSimvarRequests.Add(oSimvarRequest);
+
+            Console.WriteLine("AddFlightDataRequest def"+ m_iCurrentDefinition + " req" + m_iCurrentRequest);
 
             ++m_iCurrentDefinition;
             ++m_iCurrentRequest;
