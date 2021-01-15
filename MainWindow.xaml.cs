@@ -15,14 +15,17 @@ namespace Simvars
         int GetUserSimConnectWinEvent();
         void ReceiveSimConnectMessage();
         void SetWindowHandle(IntPtr _hWnd);
-        void LoadFile(string _sFileName);
+        void LoadSettings(string _sFileName);
         void Disconnect();
         void AddFlightDataRequest();
+        void ToggleRender();
     }
     public partial class MainWindow : Window
     {
         public MainWindow()
         {
+            Console.WriteLine("SimPolars MainWindow starting...");
+
             this.DataContext = new SimvarsViewModel(this);
 
             InitializeComponent();
@@ -39,19 +42,21 @@ namespace Simvars
             GetHWinSource().AddHook(WndProc);
             if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
             {
+                //***********************************************************************
+                // Load settings from settings.json if available, otherwise use defaults
+                //***********************************************************************
+                string settings_file = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\settings.json";
+                if (File.Exists(settings_file))
+                {
+                    oBaseSimConnectWrapper.LoadSettings(settings_file);
+                    graphBgImagePath.Text = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polar.png";
+                    oBaseSimConnectWrapper.ToggleRender();
+                }
+
                 oBaseSimConnectWrapper.SetWindowHandle(GetHWinSource().Handle);
 
                 oBaseSimConnectWrapper.AddFlightDataRequest();
 
-                /*string simvars = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polars.simvars";
-                if (File.Exists(simvars))
-                {
-                    oBaseSimConnectWrapper.LoadFile(simvars);
-                }
-                else
-                {
-                    MessageBox.Show("File 'polars.simvars' not found in folder " + System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location));
-                }*/
             }
         }
 
@@ -63,6 +68,7 @@ namespace Simvars
                 {
                     if (iMsg == oBaseSimConnectWrapper.GetUserSimConnectWinEvent())
                     {
+                        //Console.WriteLine("SimConnectWinEvent received...");
                         oBaseSimConnectWrapper.ReceiveSimConnectMessage();
                     }
                 }
@@ -116,5 +122,5 @@ namespace Simvars
             if (openFileDialog.ShowDialog() == true)
                 graphBgImagePath.Text = openFileDialog.FileName;
         }
-    }
+    } // end class MainWindow
 }

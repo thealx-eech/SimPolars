@@ -8,7 +8,7 @@
         xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
         mc:Ignorable="d"
-        Title="SimPolars" Height="700" Width="800" MinWidth="800" MinHeight="700">
+        Title="SimPolars" Height="800" Width="1000" MinWidth="800" MinHeight="700">
 
     <Window.Resources>
         <ObjectDataProvider x:Key="SimObjectTypeFromEnum" MethodName="GetValues" ObjectType="{x:Type sys:Enum}">
@@ -28,7 +28,46 @@
         </CollectionViewSource>
     </Window.Resources>
     <TabControl>
-        <TabItem Header="Settings">
+        <TabItem Header="Polars" Height="22" VerticalAlignment="Bottom">
+            <StackPanel>
+                <Grid>
+                <Button Name="graphBgImage" Click="imgLoadEvent" Margin="20 10 10 10" Width="146" HorizontalAlignment="Left">Polar Image</Button>
+                <TextBlock Name="graphBgImagePath" Margin="225,0,10,10.2"></TextBlock>
+                </Grid>
+                <Grid>
+                    <StackPanel Grid.Column="1" Margin="29,9,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Velocity axis (start / end)</TextBlock>
+                        <ComboBox Name="velocityUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                            <ComboBoxItem IsSelected="True">Kilometers per hour</ComboBoxItem>
+                        </ComboBox>
+                        <Grid>
+                            <TextBox x:Name="graphXstart" Margin="5,5,0,0" Text="48"  Width="50" HorizontalAlignment="Left"></TextBox>
+                            <TextBox x:Name="graphXend" Margin="78,5,0,0.2" Text="221"  Width="72" HorizontalAlignment="Left"></TextBox>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Margin="200,9,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Sink rate (start / end)</TextBlock>
+                        <ComboBox Name="sinkUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                            <ComboBoxItem IsSelected="True">Meters per second</ComboBoxItem>
+                        </ComboBox>
+                        <Grid>
+                            <TextBox x:Name="graphYstart" Margin="5,5,0,0" Text="-0.39" Width="50" HorizontalAlignment="Left"></TextBox>
+                            <TextBox x:Name="graphYend" Margin="95,5,0,0.2" Text="3.8" Width="55" HorizontalAlignment="Left"></TextBox>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+                <Grid>
+                    <Button x:Name="btn_Capture" Grid.Column="1" Content="{Binding sCaptureButtonLabel}" Command="{Binding cmdToggleCapture}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="146" Height="48"/>
+                    <Button x:Name="btn_Render"  Grid.Column="2" Content="REDRAW" Command="{Binding cmdToggleRender}" HorizontalAlignment="Left" Margin="185,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
+                    <Button x:Name="btn_SaveData" Grid.Column="3" Content="SAVE" Command="{Binding cmdToggleSave}" HorizontalAlignment="Left" Margin="291,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
+                    <Button x:Name="btn_LoadData" Grid.Column="4" Content="LOAD" Command="{Binding cmdToggleLoad}" HorizontalAlignment="Left" Margin="397,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
+                    <Button x:Name="btn_ClearData" Grid.Column="5" Content="CLEAR CURRENT FLAP DATA" Command="{Binding cmdToggleClear}" HorizontalAlignment="Left" Margin="503,9,0,0" VerticalAlignment="Top" Width="166" Height="48"/>
+                </Grid>
+                <StackPanel x:Name="captureLabels" Margin="30 10 0 0"></StackPanel>
+                <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="0 30 0 0"></Canvas>
+            </StackPanel>
+        </TabItem>
+        <TabItem Header="SimVars">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="79*"/>
@@ -133,41 +172,6 @@
                 <CheckBox Content="Use FSX-compatible configuration" IsChecked="{Binding bFSXcompatible, Mode=TwoWay}" HorizontalAlignment="Left" Margin="29,121,0,0" VerticalAlignment="Top" Width="217" Grid.ColumnSpan="2"/>
 
             </Grid>
-        </TabItem>
-        <TabItem Header="Polars" Height="22" VerticalAlignment="Bottom">
-            <StackPanel>
-                <TextBlock Margin="29,9,0,0" >Background image</TextBlock>
-                <Button Name="graphBgImage" Click="imgLoadEvent" Margin="20 10 10 10" Width="146" HorizontalAlignment="Left">Open file</Button>
-                <TextBlock Name="graphBgImagePath" Margin="20 0 10 10"></TextBlock>
-
-                <Grid>
-                    <StackPanel Grid.Column="1" Margin="29,9,0,0" HorizontalAlignment="Left">
-                        <TextBlock>Velocity axis (start / end)</TextBlock>
-                        <ComboBox Name="velocityUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
-                            <ComboBoxItem IsSelected="True">Kilometers per hour</ComboBoxItem>
-                        </ComboBox>
-                        <TextBox x:Name="graphXstart" Margin="5,5,0,0" Text="56"  Width="50" HorizontalAlignment="Left"></TextBox>
-                        <TextBox x:Name="graphXend" Margin="5,5,0,0" Text="200"  Width="50" HorizontalAlignment="Left"></TextBox>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2" Margin="200,9,0,0" HorizontalAlignment="Left">
-                        <TextBlock>Sink rate (start / end)</TextBlock>
-                        <ComboBox Name="sinkUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
-                            <ComboBoxItem IsSelected="True">Meters per second</ComboBoxItem>
-                        </ComboBox>
-                        <TextBox x:Name="graphYstart" Margin="5,5,0,0" Text="0" Width="50" HorizontalAlignment="Left"></TextBox>
-                        <TextBox x:Name="graphYend" Margin="5,5,0,0" Text="3.4" Width="50" HorizontalAlignment="Left"></TextBox>
-                    </StackPanel>
-                </Grid>
-                <Grid>
-                    <Button x:Name="btn_Capture" Grid.Column="1" Content="{Binding sCaptureButtonLabel}" Command="{Binding cmdToggleCapture}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="146" Height="48"/>
-                    <Button x:Name="btn_Render"  Grid.Column="2" Content="REDRAW" Command="{Binding cmdToggleRender}" HorizontalAlignment="Left" Margin="185,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_SaveData" Grid.Column="3" Content="SAVE" Command="{Binding cmdToggleSave}" HorizontalAlignment="Left" Margin="291,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_LoadData" Grid.Column="4" Content="LOAD" Command="{Binding cmdToggleLoad}" HorizontalAlignment="Left" Margin="397,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_ClearData" Grid.Column="5" Content="CLEAR CURRENT FLAP DATA" Command="{Binding cmdToggleClear}" HorizontalAlignment="Left" Margin="503,9,0,0" VerticalAlignment="Top" Width="166" Height="48"/>
-                </Grid>
-                <StackPanel x:Name="captureLabels" Margin="30 10 0 0"></StackPanel>
-                <Canvas x:Name="captureCanvas" Width="600" Height="300" Margin="0 30 0 0"></Canvas>
-            </StackPanel>
         </TabItem>
     </TabControl>
 </Window>
