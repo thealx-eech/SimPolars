@@ -431,10 +431,55 @@ namespace Simvars
 
                 if (e.RequestId == 0) // FLIGHT DATA
                 {
+                    if (!captureActive)
+                    {
+                        Console.WriteLine("FLIGHT DATA captureActive: " + captureActive);
+                    }
                     _planeInfoResponseOld = _planeInfoResponse;
                     _planeInfoResponse = (PlaneInfoResponse)e.Data;
                     lSimvarRequests[0].bPending = false;
                     lSimvarRequests[0].bStillPending = false;
+                    if (captureActive)
+                    {
+                        double AbsoluteTimeDelta = 0;
+                        if (_planeInfoResponse.AbsoluteTime != 0 && _planeInfoResponseOld.AbsoluteTime != 0)
+                        {
+                            AbsoluteTimeDelta = _planeInfoResponse.AbsoluteTime - _planeInfoResponseOld.AbsoluteTime;
+                        }
+
+
+                        if (_planeInfoResponse.AirspeedTrue != 0 && _planeInfoResponseOld.AirspeedTrue != 0 && _planeInfoResponse.Altitude != 0 && _planeInfoResponseOld.Altitude != 0 && AbsoluteTimeDelta > 0)
+                        {
+                            //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
+                            if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
+                                capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
+
+                            //double te_raw_ms = getTeValue(_planeInfoResponseOld.Altitude, _planeInfoResponse.Altitude, _planeInfoResponseOld.AirspeedTrue, _planeInfoResponse.AirspeedTrue, AbsoluteTimeDelta);
+                            double vertical_speed = (_planeInfoResponse.Altitude - _planeInfoResponseOld.Altitude) / AbsoluteTimeDelta;
+                            double te_compensation = (Math.Pow(_planeInfoResponse.AirspeedTrue, 2) - Math.Pow(_planeInfoResponseOld.AirspeedTrue, 2)) / (2 * AbsoluteTimeDelta * 9.80665);
+                            double te_raw_ms = vertical_speed + te_compensation;
+                            Console.WriteLine(String.Format("{0:n6} : {1:n3} @ {2:n3} / {3:n3} @ {4:n3} = {5:n2} ( {6:n2} + {7:n2} )",
+                                                AbsoluteTimeDelta,
+                                                _planeInfoResponseOld.AirspeedTrue,
+                                                _planeInfoResponseOld.Altitude,
+                                                _planeInfoResponse.AirspeedTrue, 
+                                                _planeInfoResponse.Altitude,
+                                                te_raw_ms,
+                                                vertical_speed,
+                                                te_compensation
+                                                ));
+                            capturedDataArray[(int)_planeInfoResponse.Flaps][(int)(_planeInfoResponse.AirspeedTrue)] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey((int)_planeInfoResponse.AirspeedTrue)
+                                ? 0.9 * capturedDataArray[(int)_planeInfoResponse.Flaps][(int)_planeInfoResponse.AirspeedTrue] + 0.1 * te_raw_ms : te_raw_ms;
+
+                            ToggleRender();
+
+                            if (variableTimer == true)
+                            {
+                                SetVariableTiming(_planeInfoResponse.AirspeedTrue, _planeInfoResponseOld.AirspeedTrue, AbsoluteTimeDelta);
+                            }
+                        }
+                    }
+
                 }
                 else // CUSTOM VARS
                 {
@@ -522,29 +567,6 @@ namespace Simvars
 
             //Console.WriteLine("AERODYNAMICS CAPTURE");
 
-            if (captureActive)
-            {
-                //Console.WriteLine(_planeInfoResponseOld.AirspeedTrue + " " + _planeInfoResponse.AirspeedTrue + " / " + _planeInfoResponseOld.Altitude + " " + _planeInfoResponse.Altitude + " : " + AbsoluteTimeDelta);
-
-                if (_planeInfoResponse.AirspeedTrue != 0 && _planeInfoResponseOld.AirspeedTrue != 0 && _planeInfoResponse.Altitude != 0 && _planeInfoResponseOld.Altitude != 0 && AbsoluteTimeDelta > 0)
-                {
-                    //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
-                    if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
-                        capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
-
-                    double te = getTeValue(_planeInfoResponseOld.Altitude, _planeInfoResponse.Altitude, _planeInfoResponseOld.AirspeedTrue, _planeInfoResponse.AirspeedTrue, AbsoluteTimeDelta);
-
-                    capturedDataArray[(int)_planeInfoResponse.Flaps][(int)(_planeInfoResponse.AirspeedTrue)] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey((int)_planeInfoResponse.AirspeedTrue)
-                        ? 0.9 * capturedDataArray[(int)_planeInfoResponse.Flaps][(int)_planeInfoResponse.AirspeedTrue] + 0.1 * te : te;
-
-                    ToggleRender();
-
-                    if (variableTimer == true)
-                    {
-                        SetVariableTiming(_planeInfoResponse.AirspeedTrue, _planeInfoResponseOld.AirspeedTrue, AbsoluteTimeDelta);
-                    }
-                }
-            }
 
 
             //Console.WriteLine("SAVE PREVIOUS STATE");
