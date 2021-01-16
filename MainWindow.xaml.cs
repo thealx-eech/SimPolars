@@ -18,7 +18,7 @@ namespace Simvars
         void LoadSettings(string _sFileName);
         void Disconnect();
         void AddFlightDataRequest();
-        void ToggleRender();
+        void ToggleRender(double airspeed_kph);
     }
     public partial class MainWindow : Window
     {
@@ -50,7 +50,7 @@ namespace Simvars
                 {
                     oBaseSimConnectWrapper.LoadSettings(settings_file);
                     graphBgImagePath.Text = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\polar.png";
-                    oBaseSimConnectWrapper.ToggleRender();
+                    oBaseSimConnectWrapper.ToggleRender(0);
                 }
 
                 oBaseSimConnectWrapper.SetWindowHandle(GetHWinSource().Handle);

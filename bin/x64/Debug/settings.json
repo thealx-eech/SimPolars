@@ -1,0 +1,7 @@
+{
+    "foo": "bah",
+    "airspeed_min_kph": 48,
+    "airspeed_max_kph": 221,
+    "sink_min_ms": -0.39,
+    "sink_max_ms": 3.8
+}

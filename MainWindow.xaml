@@ -31,8 +31,9 @@
         <TabItem Header="Polars" Height="22" VerticalAlignment="Bottom">
             <StackPanel>
                 <Grid>
-                <Button Name="graphBgImage" Click="imgLoadEvent" Margin="20 10 10 10" Width="146" HorizontalAlignment="Left">Polar Image</Button>
-                <TextBlock Name="graphBgImagePath" Margin="225,0,10,10.2"></TextBlock>
+                    <Button x:Name="btn_Connection" Content="{Binding sConnectButtonLabel}" Command="{Binding cmdToggleConnect}" HorizontalAlignment="Left" Margin="29,0,0,0" VerticalAlignment="Top" Width="110" Height="48" Grid.ColumnSpan="2"/>
+                    <Button Name="graphBgImage" Click="imgLoadEvent" Margin="150 2 2 2" Width="120" HorizontalAlignment="Left">Polar Image</Button>
+                    <TextBlock Name="graphBgImagePath" Margin="280,10,21,10"></TextBlock>
                 </Grid>
                 <Grid>
                     <StackPanel Grid.Column="1" Margin="29,9,0,0" HorizontalAlignment="Left">
@@ -84,7 +85,6 @@
                 </Hyperlink>
                 </TextBlock>
 
-                <Button x:Name="btn_Connection" Content="{Binding sConnectButtonLabel}" Command="{Binding cmdToggleConnect}" HorizontalAlignment="Left" Margin="29,68,0,0" VerticalAlignment="Top" Width="146" Height="48" Grid.ColumnSpan="2"/>
                 <Button x:Name="btn_LoadFile" Content="Load File" Command="{Binding cmdLoadFiles}" HorizontalAlignment="Left" Margin="29,156,0,0" VerticalAlignment="Top" Width="100" Height="23" RenderTransformOrigin="0.423,0.841" Grid.ColumnSpan="2"/>
                 <Button x:Name="btn_SaveFile" Content="Save File" Command="{Binding cmdSaveFile}" HorizontalAlignment="Left" Margin="69.5,156,0,0" VerticalAlignment="Top" Width="100" Height="23" Grid.Column="1"/>
                 <CheckBox Content="Save values" IsChecked="{Binding bSaveValues, Mode=TwoWay}" HorizontalAlignment="Left" Margin="88.5,184,0,0" VerticalAlignment="Top" RenderTransformOrigin="0.597,0.489" Grid.Column="1"/>

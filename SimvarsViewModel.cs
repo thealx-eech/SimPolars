@@ -125,6 +125,15 @@ namespace Simvars
 
         private Dictionary<int, double>[] capturedDataArray = new Dictionary<int, double>[24];
 
+        // Canvas parameters
+        private double canvasXstart = 48;
+        private double canvasXend = 221;
+        private double canvasYstart = -0.39;
+        private double canvasYend = 3.8;
+        private double canvasUnitX; // Initilized in SimvarsViewModel constructor.
+        private double canvasUnitY;
+
+
         // ******************************************************************
         // INTERFACE METHODS
         //*******************************************************************
@@ -380,12 +389,16 @@ namespace Simvars
             lObjectIDs = new ObservableCollection<uint>();
             lObjectIDs.Add(1);
 
+            // Setup canvas scale
+            canvasUnitX = 1 / (canvasXend - canvasXstart);
+            canvasUnitY = 1 / (canvasYend - canvasYstart);
+
             lSimvarRequests = new ObservableCollection<SimvarRequest>();
             lErrorMessages = new ObservableCollection<string>();
 
             cmdToggleConnect = new BaseCommand((p) => { ToggleConnect(); });
             cmdToggleCapture = new BaseCommand((p) => { ToggleCapture(); });
-            cmdToggleRender = new BaseCommand((p) => { ToggleRender(); });
+            cmdToggleRender = new BaseCommand((p) => { ToggleRender(0); });
             cmdToggleClear = new BaseCommand((p) => { ToggleClear(); });
             cmdToggleLoad = new BaseCommand((p) => { ToggleLoad(); });
             cmdToggleSave = new BaseCommand((p) => { ToggleSave(); });
@@ -458,7 +471,12 @@ namespace Simvars
             bOddTick = false;
         }
 
-        
+        // Return the 'data collection bucket' for a given speed (over which the TE will be smoothed)
+        private int bucket(double speed_ms)
+        {
+            return (int)speed_ms;
+        }
+
         private void HandleReceivedFsData(object sender, FsDataReceivedEventArgs e)
         {
             try
@@ -483,9 +501,11 @@ namespace Simvars
                             AbsoluteTimeDelta = _planeInfoResponse.AbsoluteTime - _planeInfoResponseOld.AbsoluteTime;
                         }
 
+                        double airspeed_ms = _planeInfoResponse.AirspeedTrue;
 
-                        if (_planeInfoResponse.AirspeedTrue != 0 && 
-                            _planeInfoResponseOld.AirspeedTrue != 0 && 
+                        if (airspeed_ms != _planeInfoResponseOld.AirspeedTrue &&
+                            airspeed_ms != 0 &&
+                            _planeInfoResponseOld.AirspeedTrue != 0 &&
                             _planeInfoResponse.Altitude != 0 && 
                             _planeInfoResponseOld.Altitude != 0 && 
                             AbsoluteTimeDelta > 0.1 &&
@@ -493,30 +513,38 @@ namespace Simvars
                         {
                             //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
                             if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
+                            {
                                 capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
-
+                            }
                             //double te_raw_ms = getTeValue(_planeInfoResponseOld.Altitude, _planeInfoResponse.Altitude, _planeInfoResponseOld.AirspeedTrue, _planeInfoResponse.AirspeedTrue, AbsoluteTimeDelta);
                             double vertical_speed = (_planeInfoResponse.Altitude - _planeInfoResponseOld.Altitude) / AbsoluteTimeDelta;
-                            double te_compensation = (Math.Pow(_planeInfoResponse.AirspeedTrue, 2) - Math.Pow(_planeInfoResponseOld.AirspeedTrue, 2)) / (2 * AbsoluteTimeDelta * 9.80665);
+                            double te_compensation = (Math.Pow(airspeed_ms, 2) - Math.Pow(_planeInfoResponseOld.AirspeedTrue, 2)) / (2 * AbsoluteTimeDelta * 9.80665);
                             double te_raw_ms = vertical_speed + te_compensation;
-                            Console.WriteLine(String.Format("{0:n6} : {1:n3} @ {2:n3} / {3:n3} @ {4:n3} = {5:n2} ( {6:n2} + {7:n2} )",
+                            double glide_ratio = te_raw_ms > -0.1 ? 99 : airspeed_ms / -te_raw_ms;
+                            Console.WriteLine(String.Format("{0:n6} : {1:n3} @ {2:n3} / {3:n3} @ {4:n3} = te:{5:n2} ( vsi:{6:n2} + comp:{7:n2} ) L/D={8:n1}",
                                                 AbsoluteTimeDelta,
-                                                _planeInfoResponseOld.AirspeedTrue,
+                                                _planeInfoResponseOld.AirspeedTrue * 3.6, // m/s -> kph
                                                 _planeInfoResponseOld.Altitude,
-                                                _planeInfoResponse.AirspeedTrue,
+                                                airspeed_ms * 3.6,
                                                 _planeInfoResponse.Altitude,
                                                 te_raw_ms,
                                                 vertical_speed,
-                                                te_compensation
+                                                te_compensation,
+                                                glide_ratio
                                                 ));
-                            capturedDataArray[(int)_planeInfoResponse.Flaps][(int)(_planeInfoResponse.AirspeedTrue)] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey((int)_planeInfoResponse.AirspeedTrue)
-                                ? 0.98 * capturedDataArray[(int)_planeInfoResponse.Flaps][(int)_planeInfoResponse.AirspeedTrue] + 0.02 * te_raw_ms : te_raw_ms;
+                            if (glide_ratio > 15 && glide_ratio < 70)
+                            {
+                                int airspeed_bucket = bucket(airspeed_ms);
 
-                            ToggleRender();
+                                capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey(airspeed_bucket)
+                                    ? 0.99 * capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] + 0.01 * te_raw_ms : te_raw_ms;
+
+                                ToggleRender(airspeed_ms * 3.6);
+                            }
 
                             if (variableTimer == true)
                             {
-                                SetVariableTiming(_planeInfoResponse.AirspeedTrue, _planeInfoResponseOld.AirspeedTrue, AbsoluteTimeDelta);
+                                SetVariableTiming(airspeed_ms, _planeInfoResponseOld.AirspeedTrue, AbsoluteTimeDelta);
                             }
                         }
                     }
@@ -683,9 +711,15 @@ namespace Simvars
                 capturedDataArray = new Dictionary<int, double>[24];
             }
 
-            ToggleRender();
+            ToggleRender(0);
         }
-        public void ToggleRender()
+
+        private double speed_kph_to_x(double speed_kph)
+        {
+            return (speed_kph - Math.Ceiling(canvasXstart)) * canvasUnitX;
+        }
+
+        public void ToggleRender(double current_speed_kph)
         {
             parent = (MainWindow)System.Windows.Application.Current.MainWindow;
             parent.captureCanvas.Children.Clear();
@@ -693,12 +727,13 @@ namespace Simvars
             parent.captureLabels.Children.Clear();
 
             // RENDER GRID
-            if (double.TryParse((parent).graphXstart.Text, out double valXstart) &&
-                double.TryParse((parent).graphXend.Text, out double valXend) &&
-                double.TryParse((parent).graphYstart.Text, out double valYstart) &&
-                double.TryParse((parent).graphYend.Text, out double valYend))
+            //if (double.TryParse((parent).graphXstart.Text, out double canvasXstart) &&
+            //    double.TryParse((parent).graphXend.Text, out double canvasXend) &&
+            //    double.TryParse((parent).graphYstart.Text, out double canvasYstart) &&
+            //    double.TryParse((parent).graphYend.Text, out double canvasYend))
+            if (true)
             {
-                /*if (captureActive == true && airspeedTrue * 3.6 < valXstart) // DISABLE CAPTURE
+                /*if (captureActive == true && airspeedTrue * 3.6 < canvasXstart) // DISABLE CAPTURE
                 {
                     ToggleCapture();
                 }*/
@@ -707,9 +742,6 @@ namespace Simvars
                 double canvasHeight = parent.captureCanvas.Height;
                 parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 0, 1, canvasWidth, canvasHeight, 2));
                 parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 1, 0, canvasWidth, canvasHeight, 2));
-
-                double unitX = 1 / (valXend - valXstart);
-                double unitY = 1 / (valYend - valYstart);
 
                 // BACKGROUND IMAGE
                 if (!string.IsNullOrEmpty(parent.graphBgImagePath.Text) && File.Exists(parent.graphBgImagePath.Text))
@@ -722,17 +754,17 @@ namespace Simvars
                 }
 
                 // HORIZONTAL SPEED
-                for (double k = Math.Ceiling(valXstart / 10) * 10 - Math.Ceiling(valXstart); k <= valXend - Math.Ceiling(valXstart); k += 10)
+                for (double k = Math.Ceiling(canvasXstart / 10) * 10 - Math.Ceiling(canvasXstart); k <= canvasXend - Math.Ceiling(canvasXstart); k += 10)
                 {
-                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, k * unitX, 0, k * unitX, 1, canvasWidth, canvasHeight, 1));
-                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, k * unitX * canvasWidth, -16, (k + valXstart).ToString());
+                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, k * canvasUnitX, 0, k * canvasUnitX, 1, canvasWidth, canvasHeight, 1));
+                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, k * canvasUnitX * canvasWidth, -16, (k + canvasXstart).ToString());
                 }
 
                 // VERTICAL SPEED
-                for (double k = Math.Ceiling(valYstart) - Math.Ceiling(valYstart); k <= valYend - Math.Ceiling(valYstart); k += 1)
+                for (double k = 0; k <= canvasYend - Math.Ceiling(canvasYstart); k += 1)
                 {
-                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, 0, k * unitY, 1, k * unitY, canvasWidth, canvasHeight, 1));
-                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, k * unitY * canvasHeight, (k + valYstart).ToString());
+                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, 0, k * canvasUnitY, 1, k * canvasUnitY, canvasWidth, canvasHeight, 1));
+                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, k * canvasUnitY * canvasHeight, (k + canvasYstart).ToString());
                 }
 
                 // CAPTURED VALUES
@@ -747,26 +779,29 @@ namespace Simvars
 
                         foreach (var capturedValue in capturedData)
                         {
-                            double airspeed = capturedValue.Key * 3.6;
+                            double airspeed_kph = capturedValue.Key * 3.6;
                             double te = capturedValue.Value;
-                            if (airspeed >= valXstart && airspeed <= valXend && (-te) >= valYstart && (-te) <= valYend)
+                            if (airspeed_kph >= canvasXstart && airspeed_kph <= canvasXend && (-te) >= canvasYstart && (-te) <= canvasYend)
                             {
                                 parent.captureCanvas.Children.Add(getGraphLine( color,                                               // color
-                                                                                (airspeed + 0.01 - Math.Ceiling(valXstart)) * unitX, // x1
-                                                                                (-te + 0.02 - valYstart) * unitY,      // y1
-                                                                                (airspeed - 0.01 - Math.Ceiling(valXstart)) * unitX, // x2 
-                                                                                (-te - 0.02 - valYstart) * unitY,      // y2
+                                                                                (airspeed_kph + 0.01 - Math.Ceiling(canvasXstart)) * canvasUnitX, // x1
+                                                                                (-te + 0.02 - canvasYstart) * canvasUnitY,                    // y1
+                                                                                (airspeed_kph + 3.6 - Math.Ceiling(canvasXstart)) * canvasUnitX,    // x2 
+                                                                                (-te + 0.02 - canvasYstart) * canvasUnitY,                    // y2
                                                                                 canvasWidth,                                         // width
                                                                                 canvasHeight,                                        // height
                                                                                 3));                                                 // thickness
-                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling(valXstart)) * unitX + " " + (-te - Math.Ceiling(valYstart)) * unitY);
+                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling(canvasXstart)) * canvasUnitX + " " + (-te - Math.Ceiling(canvasYstart)) * canvasUnitY);
                             }
                         }
                     }
                     index++;
                 }
 
-
+                // CURRENT SPEED
+                double x = speed_kph_to_x(current_speed_kph);
+                                                                 // color x1 y1 x2 y2                             strokeWidth
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Red, x, 0, x, 1, canvasWidth, canvasHeight, 1));
             }
         }
 
