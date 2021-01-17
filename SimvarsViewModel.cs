@@ -101,7 +101,12 @@ namespace Simvars
         // CLASS VARS
         //*******************************************************************
 
-        private JObject settings;
+        public string BASE_DIRECTORY = "";
+
+        public JObject settings;
+
+        private ImageBrush background_ib; // Polar image
+        private bool background_available = false;
 
         private static PlaneInfoResponse _planeInfoResponse;
         private static PlaneInfoResponse _planeInfoResponseOld;
@@ -121,15 +126,11 @@ namespace Simvars
         /// SimConnect object
         private SimConnect m_oSimConnect = null;
 
-        private bool captureActive = false;
+
+        private bool captureActive = true;
 
         private Dictionary<int, double>[] capturedDataArray = new Dictionary<int, double>[24];
 
-        // Canvas parameters
-        private double canvasXstart = 48;
-        private double canvasXend = 221;
-        private double canvasYstart = -0.39;
-        private double canvasYend = 3.8;
         private double canvasUnitX; // Initilized in SimvarsViewModel constructor.
         private double canvasUnitY;
 
@@ -143,14 +144,20 @@ namespace Simvars
         //        int GetUserSimConnectWinEvent();
         //        void ReceiveSimConnectMessage();
         //        void SetWindowHandle(IntPtr _hWnd);
-        //        void LoadSettings(string _sFileName);
         //        void Disconnect();
         //        void AddFlightDataRequest();
+        //        string getBaseDirectory();
+        //        JObject getSettings();
         //    }
 
         public int GetUserSimConnectWinEvent()
         {
             return WM_USER_SIMCONNECT;
+        }
+
+        public string getBaseDirectory()
+        {
+            return BASE_DIRECTORY;
         }
 
         public void ReceiveSimConnectMessage()
@@ -163,13 +170,33 @@ namespace Simvars
             m_hWnd = _hWnd;
         }
 
-        public void LoadSettings(string _sFileName)
+        public JObject getSettings()
         {
-            string settings_str = System.IO.File.ReadAllText(_sFileName);
-            settings = JObject.Parse(settings_str);
-            Console.WriteLine("JSON: "+settings["foo"]);
+            return settings;
         }
 
+        public bool updateSetting(string setting_key, string setting_value)
+        {
+            Console.WriteLine("updateSetting " + setting_key + " to " + setting_value);
+            switch (setting_key)
+            {
+                case "airspeed_min_kph":
+                case "airspeed_max_kph":
+                case "sink_min_ms":
+                case "sink_max_ms":
+                    settings[setting_key] = double.Parse(setting_value);
+                    break;
+                case "polar_image":
+                    settings[setting_key] = setting_value;
+                    break;
+                default:
+                    Console.WriteLine("How strange... we tried to update a setting we didn't recognize");
+                    return false;
+            }
+            handleSettingsChange();
+            ToggleRender(0);
+            return true;
+        }
         public void Disconnect()
         {
             Console.WriteLine("Disconnecting from SimConnect");
@@ -359,10 +386,11 @@ namespace Simvars
 
         public BaseCommand cmdToggleConnect { get; private set; }
         public BaseCommand cmdToggleCapture { get; private set; }
-        public BaseCommand cmdToggleRender { get; private set; }
-        public BaseCommand cmdToggleClear { get; private set; }
+        public BaseCommand cmdToggleReset { get; private set; }
+        public BaseCommand cmdToggleResetFlap { get; private set; }
         public BaseCommand cmdToggleLoad { get; private set; }
         public BaseCommand cmdToggleSave { get; private set; }
+        public BaseCommand cmdSaveSettings { get; private set; }
         public BaseCommand cmdAddRequest { get; private set; }
         public BaseCommand cmdRemoveSelectedRequest { get; private set; }
         public BaseCommand cmdTrySetValue { get; private set; }
@@ -383,23 +411,41 @@ namespace Simvars
 
         #endregion
 
-        public SimvarsViewModel(MainWindow parent)
+        // ****************************************************************************************************
+        // ****************************************************************************************************
+        // ******* MAIN CLASS CONSTRUCTOR         *************************************************************
+        // ****************************************************************************************************
+        // ****************************************************************************************************
+        public SimvarsViewModel(MainWindow parent_window)
         {
-            parent = (MainWindow)System.Windows.Application.Current.MainWindow;
+            parent = parent_window; // (MainWindow)System.Windows.Application.Current.MainWindow;
             lObjectIDs = new ObservableCollection<uint>();
             lObjectIDs.Add(1);
 
-            // Setup canvas scale
-            canvasUnitX = 1 / (canvasXend - canvasXstart);
-            canvasUnitY = 1 / (canvasYend - canvasYstart);
+            BASE_DIRECTORY = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
+
+            //***********************************************************************
+            // Load settings from settings.json if available, otherwise use defaults
+            //***********************************************************************
+            string settings_file = BASE_DIRECTORY + "\\settings.json";
+            if (File.Exists(settings_file))
+            {
+                LoadSettings(settings_file);
+            }
+
+            // Setting up background polar image
+            background_ib = new ImageBrush();
+            background_ib.Stretch = Stretch.Fill;
+
+            handleSettingsChange();
 
             lSimvarRequests = new ObservableCollection<SimvarRequest>();
             lErrorMessages = new ObservableCollection<string>();
 
             cmdToggleConnect = new BaseCommand((p) => { ToggleConnect(); });
             cmdToggleCapture = new BaseCommand((p) => { ToggleCapture(); });
-            cmdToggleRender = new BaseCommand((p) => { ToggleRender(0); });
-            cmdToggleClear = new BaseCommand((p) => { ToggleClear(); });
+            cmdToggleReset = new BaseCommand((p) => { ToggleReset(); });
+            cmdToggleResetFlap = new BaseCommand((p) => { ToggleResetFlap(); });
             cmdToggleLoad = new BaseCommand((p) => { ToggleLoad(); });
             cmdToggleSave = new BaseCommand((p) => { ToggleSave(); });
             cmdAddRequest = new BaseCommand((p) => { AddRequest(null, null); });
@@ -408,9 +454,10 @@ namespace Simvars
             cmdSetValuePerm = new BaseCommand((p) => { SetValuePerm(); });
             cmdLoadFiles = new BaseCommand((p) => { LoadFiles(); });
             cmdSaveFile = new BaseCommand((p) => { SaveFile(false); });
+            cmdSaveSettings = new BaseCommand((p) => { SaveSettings(); });
             cmdInsertThermal = new BaseCommand((p) => { InsertThermal(); });
 
-            m_oTimer.Interval = new TimeSpan(0, 0, 0, 0, 100);
+            m_oTimer.Interval = new TimeSpan(0, 0, 0, 0, 300); //DEBUG changed to 300ms
             m_oTimer.Tick += new EventHandler(OnTick);
         }
 
@@ -507,9 +554,9 @@ namespace Simvars
                             airspeed_ms != 0 &&
                             _planeInfoResponseOld.AirspeedTrue != 0 &&
                             _planeInfoResponse.Altitude != 0 && 
-                            _planeInfoResponseOld.Altitude != 0 && 
-                            AbsoluteTimeDelta > 0.1 &&
-                            AbsoluteTimeDelta < 0.12)
+                            _planeInfoResponseOld.Altitude != 0)// && 
+                            //AbsoluteTimeDelta > 0.1 &&
+                            //AbsoluteTimeDelta < 0.12)
                         {
                             //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
                             if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
@@ -521,7 +568,7 @@ namespace Simvars
                             double te_compensation = (Math.Pow(airspeed_ms, 2) - Math.Pow(_planeInfoResponseOld.AirspeedTrue, 2)) / (2 * AbsoluteTimeDelta * 9.80665);
                             double te_raw_ms = vertical_speed + te_compensation;
                             double glide_ratio = te_raw_ms > -0.1 ? 99 : airspeed_ms / -te_raw_ms;
-                            Console.WriteLine(String.Format("{0:n6} : {1:n3} @ {2:n3} / {3:n3} @ {4:n3} = te:{5:n2} ( vsi:{6:n2} + comp:{7:n2} ) L/D={8:n1}",
+                            Console.WriteLine(String.Format("{0:n6} : {1:n3} @ {2:n3} / {3:n3} @ {4:n3} = te:{5:n2} ( vsi:{6:n2} + comp:{7:n2} ) L/D={8:n1} flap={9}",
                                                 AbsoluteTimeDelta,
                                                 _planeInfoResponseOld.AirspeedTrue * 3.6, // m/s -> kph
                                                 _planeInfoResponseOld.Altitude,
@@ -530,14 +577,17 @@ namespace Simvars
                                                 te_raw_ms,
                                                 vertical_speed,
                                                 te_compensation,
-                                                glide_ratio
+                                                glide_ratio,
+                                                (int)_planeInfoResponse.Flaps
                                                 ));
                             if (glide_ratio > 15 && glide_ratio < 70)
                             {
                                 int airspeed_bucket = bucket(airspeed_ms);
 
+                                double SMOOTHING_RATIO = 0.9;
+
                                 capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey(airspeed_bucket)
-                                    ? 0.99 * capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] + 0.01 * te_raw_ms : te_raw_ms;
+                                    ? SMOOTHING_RATIO * capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] + (1 - SMOOTHING_RATIO) * te_raw_ms : te_raw_ms;
 
                                 ToggleRender(airspeed_ms * 3.6);
                             }
@@ -634,11 +684,6 @@ namespace Simvars
                 }
             }
 
-            //Console.WriteLine("AERODYNAMICS CAPTURE");
-
-
-
-            //Console.WriteLine("SAVE PREVIOUS STATE");
         }
 
         //(h2 - h1) / t + (v2^2 - v1^2) / (2 * t * g)
@@ -701,22 +746,26 @@ namespace Simvars
             }
         }
 
-        private void ToggleClear()
+        private void ToggleResetFlap()
         {
-            if (_planeInfoResponse.Flaps != 0) // CLEAR FLAP DATA ONLY
-            {
-                capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
-            } else // CLEAR ALL
-            {
-                capturedDataArray = new Dictionary<int, double>[24];
-            }
+            capturedDataArray[(int)_planeInfoResponse.Flaps] = new Dictionary<int, double>();
+            ToggleRender(0);
+        }
 
+        private void ToggleReset()
+        {
+            capturedDataArray = new Dictionary<int, double>[24];
             ToggleRender(0);
         }
 
         private double speed_kph_to_x(double speed_kph)
         {
-            return (speed_kph - Math.Ceiling(canvasXstart)) * canvasUnitX;
+            return (speed_kph - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX;
+        }
+
+        private double sink_ms_to_y(double sink_ms)
+        {
+            return -(sink_ms + (double)settings.GetValue("sink_min_ms")) * canvasUnitY;
         }
 
         public void ToggleRender(double current_speed_kph)
@@ -727,10 +776,6 @@ namespace Simvars
             parent.captureLabels.Children.Clear();
 
             // RENDER GRID
-            //if (double.TryParse((parent).graphXstart.Text, out double canvasXstart) &&
-            //    double.TryParse((parent).graphXend.Text, out double canvasXend) &&
-            //    double.TryParse((parent).graphYstart.Text, out double canvasYstart) &&
-            //    double.TryParse((parent).graphYend.Text, out double canvasYend))
             if (true)
             {
                 /*if (captureActive == true && airspeedTrue * 3.6 < canvasXstart) // DISABLE CAPTURE
@@ -740,32 +785,41 @@ namespace Simvars
 
                 double canvasWidth = parent.captureCanvas.Width;
                 double canvasHeight = parent.captureCanvas.Height;
-                parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 0, 1, canvasWidth, canvasHeight, 2));
-                parent.captureCanvas.Children.Add(getGraphLine(Colors.Black, 0, 0, 1, 0, canvasWidth, canvasHeight, 2));
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Blue, 0, 0, 0, 1, canvasWidth, canvasHeight, 2));
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Blue, 0, 0, 1, 0, canvasWidth, canvasHeight, 2));
 
                 // BACKGROUND IMAGE
-                if (!string.IsNullOrEmpty(parent.graphBgImagePath.Text) && File.Exists(parent.graphBgImagePath.Text))
+                //if (!string.IsNullOrEmpty(parent.graphBgImagePath.Text) && File.Exists(parent.graphBgImagePath.Text))
+                if (background_available)
                 {
-                    Image img = new Image();
-                    ImageBrush ib = new ImageBrush();
-                    ib.Stretch = Stretch.Fill;
-                    ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
-                    parent.captureCanvas.Background = ib;
+                    //Image img = new Image();
+                    parent.captureCanvas.Background = background_ib;
                 }
 
                 // HORIZONTAL SPEED
-                for (double k = Math.Ceiling(canvasXstart / 10) * 10 - Math.Ceiling(canvasXstart); k <= canvasXend - Math.Ceiling(canvasXstart); k += 10)
+                for (double speed_kph=0; speed_kph<=(double)settings.GetValue("airspeed_max_kph"); speed_kph += 10)
                 {
-                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, k * canvasUnitX, 0, k * canvasUnitX, 1, canvasWidth, canvasHeight, 1));
-                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, k * canvasUnitX * canvasWidth, -16, (k + canvasXstart).ToString());
+                    if (speed_kph > (double)settings.GetValue("airspeed_min_kph"))
+                    {
+                        double x = speed_kph_to_x(speed_kph);
+                        parent.captureCanvas.Children.Add(getGraphLine(Colors.LightBlue, x, 0, x, 1, canvasWidth, canvasHeight, 1));
+                        getCanvasTextLabel(parent.captureCanvas, Colors.Gray, x * canvasWidth, -16, speed_kph.ToString());
+                    }
                 }
 
                 // VERTICAL SPEED
-                for (double k = 0; k <= canvasYend - Math.Ceiling(canvasYstart); k += 1)
+                for (double sink_ms=0; sink_ms >= -(double)settings.GetValue("sink_max_ms"); sink_ms -= 0.2)
+                //for (double k = 0; k <= (double)settings.GetValue("sink_max_ms") - Math.Ceiling((double)settings.GetValue("sink_min_ms")); k += 1)
                 {
-                    parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, 0, k * canvasUnitY, 1, k * canvasUnitY, canvasWidth, canvasHeight, 1));
-                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, k * canvasUnitY * canvasHeight, (k + canvasYstart).ToString());
+                    double y = sink_ms_to_y(sink_ms);
+                    parent.captureCanvas.Children.Add(getGraphLine(Colors.LightBlue, 0,y, 1, y, canvasWidth, canvasHeight, 1));
+                    getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, y * canvasHeight - 10, sink_ms.ToString());
+                    //parent.captureCanvas.Children.Add(getGraphLine(Colors.Gray, 0, k * canvasUnitY, 1, k * canvasUnitY, canvasWidth, canvasHeight, 1));
+                    //getCanvasTextLabel(parent.captureCanvas, Colors.Gray, -14, k * canvasUnitY * canvasHeight, (k + (double)settings.GetValue("sink_min_ms")).ToString());
                 }
+
+                // Legend label
+                updateLegendLabel();
 
                 // CAPTURED VALUES
                 int index = 1;
@@ -773,25 +827,25 @@ namespace Simvars
                 {
                     if (capturedData != null && capturedData.Count > 0)
                     {
-                        Color color = Color.FromRgb((byte)(255 - index % 4 * 127), (byte)(255 - (index + 1) % 3 * 127), (byte)(255 - (index + 2) % 3 * 127));
-                        //Console.WriteLine(color.ToString());
-                        parent.captureLabels.Children.Add(getTextLabel(color, "Flaps position #" + (index - 1) + " " + (int)_planeInfoResponse.Weight + "kg"));
+                        addFlapLegend(index-1);
+
+                        Color color = getFlapColor(index - 1);
 
                         foreach (var capturedValue in capturedData)
                         {
                             double airspeed_kph = capturedValue.Key * 3.6;
                             double te = capturedValue.Value;
-                            if (airspeed_kph >= canvasXstart && airspeed_kph <= canvasXend && (-te) >= canvasYstart && (-te) <= canvasYend)
+                            if (airspeed_kph >= (double)settings.GetValue("airspeed_min_kph") && airspeed_kph <= (double)settings.GetValue("airspeed_max_kph") && (-te) >= (double)settings.GetValue("sink_min_ms") && (-te) <= (double)settings.GetValue("sink_max_ms"))
                             {
                                 parent.captureCanvas.Children.Add(getGraphLine( color,                                               // color
-                                                                                (airspeed_kph + 0.01 - Math.Ceiling(canvasXstart)) * canvasUnitX, // x1
-                                                                                (-te + 0.02 - canvasYstart) * canvasUnitY,                    // y1
-                                                                                (airspeed_kph + 3.6 - Math.Ceiling(canvasXstart)) * canvasUnitX,    // x2 
-                                                                                (-te + 0.02 - canvasYstart) * canvasUnitY,                    // y2
+                                                                                (airspeed_kph + 0.01 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX, // x1
+                                                                                (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y1
+                                                                                (airspeed_kph + 3.6 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX,    // x2 
+                                                                                (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y2
                                                                                 canvasWidth,                                         // width
                                                                                 canvasHeight,                                        // height
                                                                                 3));                                                 // thickness
-                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling(canvasXstart)) * canvasUnitX + " " + (-te - Math.Ceiling(canvasYstart)) * canvasUnitY);
+                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX + " " + (-te - Math.Ceiling(canvasYstart)) * canvasUnitY);
                             }
                         }
                     }
@@ -799,9 +853,9 @@ namespace Simvars
                 }
 
                 // CURRENT SPEED
-                double x = speed_kph_to_x(current_speed_kph);
+                double speed_x = speed_kph_to_x(current_speed_kph);
                                                                  // color x1 y1 x2 y2                             strokeWidth
-                parent.captureCanvas.Children.Add(getGraphLine(Colors.Red, x, 0, x, 1, canvasWidth, canvasHeight, 1));
+                parent.captureCanvas.Children.Add(getGraphLine(Colors.Red, speed_x, 0, speed_x, 1, canvasWidth, canvasHeight, 1));
             }
         }
 
@@ -816,7 +870,46 @@ namespace Simvars
             Canvas.SetTop(label, y1);
         }
 
-        private TextBlock getTextLabel(Color color, string text)
+        private Color getFlapColor(int flap_index)
+        {
+            Color[] flap_colors = {
+                Color.FromRgb(128, 0, 0),   // 0
+                Color.FromRgb(255, 0, 0),   // 1
+                Color.FromRgb(0, 100, 0),   // 2
+                Color.FromRgb(235, 125, 0), // 3
+                Color.FromRgb(0, 0,128),    // 4
+                Color.FromRgb(255, 0, 255), // 5
+                Color.FromRgb(255,215,0)    // 6
+            };
+
+            return flap_colors[flap_index % flap_colors.Length];
+        }
+
+        private void updateLegendLabel()
+        {
+            TextBlock legend_label = getTextBlock(Colors.Black, (int)_planeInfoResponse.Weight + "kg Flaps:");
+
+            Grid.SetColumn(legend_label, 0);
+            Grid.SetRow(legend_label, 0);
+
+            //Console.WriteLine(color.ToString());
+            parent.captureLabels.Children.Add(legend_label);
+        }
+
+        private void addFlapLegend(int flap_index)
+        {
+            Color color = getFlapColor(flap_index);
+
+            TextBlock legend_item = getTextBlock(color, "Flap #" + flap_index);
+
+            Grid.SetColumn(legend_item, flap_index + 1);
+            Grid.SetRow(legend_item, 0);
+
+            //Console.WriteLine(color.ToString());
+            parent.captureLabels.Children.Add(legend_item);
+        }
+
+        private TextBlock getTextBlock(Color color, string text)
         {
             TextBlock label = new TextBlock();
             label.Foreground = new SolidColorBrush(color);
@@ -852,7 +945,7 @@ namespace Simvars
                 {
                     try
                     {
-                        File.WriteAllText(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location) + "\\flaps"+index+".json", JsonConvert.SerializeObject(capturedData));
+                        File.WriteAllText(BASE_DIRECTORY + "\\save_data_flaps"+index+".json", JsonConvert.SerializeObject(capturedData));
                     }
                     catch { }
                 }
@@ -1050,6 +1143,49 @@ namespace Simvars
                         oStreamWriter.WriteLine(sFormatedLine);
                     }
                 }
+            }
+        }
+
+        private void handleSettingsChange()
+        {
+            //DEBUG move this into a function & call it when UI filename changes
+            string polar_filename = (string)settings.GetValue("polar_image");
+
+            if (!polar_filename.Contains(":") && !polar_filename.StartsWith("\\") && !polar_filename.StartsWith("."))
+            {
+                polar_filename = BASE_DIRECTORY + "\\" + polar_filename;
+            }
+
+            background_ib.ImageSource = new BitmapImage(new Uri(polar_filename));
+
+            //background_ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
+            background_available = true;
+
+            // Setup canvas scale
+            canvasUnitX = 1 / ((double)settings.GetValue("airspeed_max_kph") - (double)settings.GetValue("airspeed_min_kph"));
+            canvasUnitY = 1 / ((double)settings.GetValue("sink_max_ms") - (double)settings.GetValue("sink_min_ms"));
+        }
+
+        private void LoadSettings(string _sFileName)
+        {
+            string settings_str = System.IO.File.ReadAllText(_sFileName);
+            settings = JObject.Parse(settings_str);
+            Console.WriteLine("Settings loaded from " + _sFileName);
+            // Update display page with these value
+            //(parent).graphXstart.Text = "77"; // (string)settings.GetValue("airspeed_min_kph");
+            //Console.WriteLine("Page xstart: " + parent.graphXstart.Text);
+            //sGraphXstart = "77";
+        }
+
+
+        private void SaveSettings()
+        {
+            string settings_filename = BASE_DIRECTORY + "\\settings.json";
+            Console.WriteLine("Saving settings to " + settings_filename);
+            using (StreamWriter oStreamWriter = new StreamWriter(settings_filename, false))
+            {
+                string settings_str = settings.ToString();
+                oStreamWriter.Write(settings_str);
             }
         }
 
