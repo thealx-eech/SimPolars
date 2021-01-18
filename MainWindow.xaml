@@ -105,7 +105,7 @@
                     <TextBlock Grid.Column="0" HorizontalAlignment="Right">Flap Colors:</TextBlock>
 
                 </Grid>
-                <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="0 30 0 0"></Canvas>
+                <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="20 10 0 0"></Canvas>
             </StackPanel>
         </TabItem>
         <TabItem Header="SimVars">

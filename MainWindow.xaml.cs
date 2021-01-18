@@ -9,6 +9,8 @@ using System.Windows.Interop;
 using System.Windows.Navigation;
 using Newtonsoft.Json.Linq;
 using System.Windows.Media;
+using System.Globalization;
+using System.Threading;
 
 namespace Simvars
 {
@@ -21,7 +23,7 @@ namespace Simvars
         void SetWindowHandle(IntPtr _hWnd);
         void Disconnect();
         void AddFlightDataRequest();
-        void ToggleRender(double airspeed_kph);
+        void Render(double airspeed_kph);
         JObject getSettings();
         bool updateSetting(string setting_key, string setting_value);
     }
@@ -30,6 +32,11 @@ namespace Simvars
         public MainWindow()
         {
             Console.WriteLine("SimPolars MainWindow starting...");
+            // have . as decimal point (German MS-Windows uses ,)
+            CultureInfo culture = CultureInfo.CreateSpecificCulture("en-US");
+            CultureInfo.DefaultThreadCurrentCulture = culture;
+            Thread.CurrentThread.CurrentCulture = culture;
+            Thread.CurrentThread.CurrentUICulture = culture;
 
             this.DataContext = new SimvarsViewModel(this);
 
@@ -64,7 +71,7 @@ namespace Simvars
 
                 oBaseSimConnectWrapper.AddFlightDataRequest();
 
-                oBaseSimConnectWrapper.ToggleRender(0);
+                oBaseSimConnectWrapper.Render(0);
 
             }
         }
