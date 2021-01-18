@@ -432,6 +432,10 @@ namespace Simvars
             {
                 LoadSettings(settings_file);
             }
+            else
+            {
+                settings = new JObject();
+            }
 
             // Setting up background polar image
             background_ib = new ImageBrush();
@@ -1149,17 +1153,27 @@ namespace Simvars
         private void handleSettingsChange()
         {
             //DEBUG move this into a function & call it when UI filename changes
-            string polar_filename = (string)settings.GetValue("polar_image");
-
-            if (!polar_filename.Contains(":") && !polar_filename.StartsWith("\\") && !polar_filename.StartsWith("."))
+            if (settings.ContainsKey("polar_image"))
             {
-                polar_filename = BASE_DIRECTORY + "\\" + polar_filename;
+                string polar_filename = (string)settings.GetValue("polar_image");
+
+                if (!polar_filename.Contains(":") && !polar_filename.StartsWith("\\") && !polar_filename.StartsWith("."))
+                {
+                    polar_filename = BASE_DIRECTORY + "\\" + polar_filename;
+                }
+
+                if (File.Exists(polar_filename))
+                {
+                    background_ib.ImageSource = new BitmapImage(new Uri(polar_filename));
+
+                    //background_ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
+                    background_available = true;
+                }
+                else
+                {
+                    MessageBox.Show(polar_filename + " not found!");
+                }
             }
-
-            background_ib.ImageSource = new BitmapImage(new Uri(polar_filename));
-
-            //background_ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
-            background_available = true;
 
             // Setup canvas scale
             canvasUnitX = 1 / ((double)settings.GetValue("airspeed_max_kph") - (double)settings.GetValue("airspeed_min_kph"));
