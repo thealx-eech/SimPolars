@@ -159,6 +159,10 @@ namespace Simvars
             {
                 LoadSettings(settings_file);
             }
+            else
+            {
+                settings = new JObject();
+            }
 
             // Setting up background polar image
             background_ib = new ImageBrush();
@@ -340,7 +344,7 @@ namespace Simvars
             }
         }
         private uint m_iObjectIdRequest = 0;
-        
+
 
         public string[] aSimvarNames
         {
@@ -423,7 +427,6 @@ namespace Simvars
         public BaseCommand cmdSetValuePerm { get; private set; }
         public BaseCommand cmdLoadFiles { get; private set; }
         public BaseCommand cmdSaveFile { get; private set; }
-        public BaseCommand cmdInsertThermal { get; private set; }
 
         public MainWindow parent;
 
@@ -532,8 +535,8 @@ namespace Simvars
                         if (airspeed_ms != _planeInfoResponseOld.AirspeedTrue &&
                             airspeed_ms != 0 &&
                             _planeInfoResponseOld.AirspeedTrue != 0 &&
-                            _planeInfoResponse.Altitude != 0 && 
-                            _planeInfoResponseOld.Altitude != 0)// && 
+                            _planeInfoResponse.Altitude != 0 &&
+                            _planeInfoResponseOld.Altitude != 0)// &&
                             //AbsoluteTimeDelta > 0.1 &&
                             //AbsoluteTimeDelta < 0.12)
                         {
@@ -690,7 +693,7 @@ namespace Simvars
                             parent.captureCanvas.Children.Add(getGraphLine(color,                                               // color
                                                                             (airspeed_kph + 0.01 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX, // x1
                                                                             (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y1
-                                                                            (airspeed_kph + 3.6 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX,    // x2 
+                                                                            (airspeed_kph + 3.6 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX,    // x2
                                                                             (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y2
                                                                             canvasWidth,                                         // width
                                                                             canvasHeight,                                        // height
@@ -1167,27 +1170,35 @@ namespace Simvars
 
         private void handleSettingsChange()
         {
-            //DEBUG move this into a function & call it when UI filename changes
-            string polar_filename = (string)settings.GetValue("polar_image");
-
-            if (!polar_filename.Contains(":") && !polar_filename.StartsWith("\\") && !polar_filename.StartsWith("."))
+            if (settings.ContainsKey("polar_image"))
             {
-                polar_filename = BASE_DIRECTORY + "\\" + polar_filename;
-            }
+                string polar_filename = (string)settings.GetValue("polar_image");
 
-            try
-            {
-                background_ib.ImageSource = new BitmapImage(new Uri(polar_filename));
-                background_available = true;
-            }
-            catch
-            {
-                background_available = false;
-                Console.WriteLine("Failed to load polar image");
-            }
+                if (!polar_filename.Contains(":") && !polar_filename.StartsWith("\\") && !polar_filename.StartsWith("."))
+                {
+                    polar_filename = BASE_DIRECTORY + "\\" + polar_filename;
+                }
 
-            //background_ib.ImageSource = new BitmapImage(new Uri(parent.graphBgImagePath.Text));
-
+                if (File.Exists(polar_filename))
+                {
+                    try
+                    {
+                        background_ib.ImageSource = new BitmapImage(new Uri(polar_filename));
+                        background_available = true;
+                    }
+                    catch
+                    {
+                        background_available = false;
+                        MessageBox.Show("Polar image "+ polar_filename + " not a usable image format!");
+                        Console.WriteLine("Polar image "+ polar_filename + " not a usable image format!");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Polar image: " + polar_filename + " not found!");
+                    MessageBox.Show("Polar image: "+polar_filename + " not found!");
+                }
+            }
 
             // Setup canvas scale
             canvasUnitX = 1 / ((double)settings.GetValue("airspeed_max_kph") - (double)settings.GetValue("airspeed_min_kph"));
