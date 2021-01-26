@@ -78,7 +78,7 @@ How to use:
 1. Launch MSFS
 2. Launch application, request with all necessary flight model variables will be loaded as #0
 3. Press "CONNECT" button
-4. select Variable frequesncy option if necessary
+4. select Variable frequency option if necessary
 5. Open tab "Polars"
 6. Load polars image if you have aircraft aerodynamics documentation
 7. Adjust min/max values, units are not available yet
@@ -95,7 +95,7 @@ How to use:
 13. Captured data can be saved as JSON file
 14. to clear data of current flap, press CLEAR button
 
-In version 0.3 request scripts was altered to support structured data responce (borrowed from FsConnect project). This method provide
+In version 0.3 request scripts was altered to support structured data response (borrowed from FsConnect project). This method provide
 best timing precision, as flight model data and absolute time value are taken from the same frame.
 List of request #0 variables hardcoded in:
 
