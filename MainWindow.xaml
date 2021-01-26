@@ -76,6 +76,13 @@
                             <TextBox x:Name="graphYend" Margin="95,5,0,0.2" Width="55" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphYend_LostFocus"></TextBox>
                         </Grid>
                     </StackPanel>
+                    <StackPanel Grid.Column="3" Margin="400,9,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Speed measurement</TextBlock>
+                        <ComboBox Name="speedMeasurement" SelectionChanged="speedMeasurement_changed" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                            <ComboBoxItem>True airspeed</ComboBoxItem>
+                            <ComboBoxItem>Indicated airspeed</ComboBoxItem>
+                        </ComboBox>
+                    </StackPanel>
                 </Grid>
                 <Grid>
                     <!-- <Button x:Name="btn_Capture" Grid.Column="1" Content="{Binding sCaptureButtonLabel}" Command="{Binding cmdToggleCapture}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="146" Height="48"/> -->
@@ -90,7 +97,7 @@
                         <RowDefinition Height="25"></RowDefinition>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="140" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
@@ -102,8 +109,6 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" HorizontalAlignment="Right">Flap Colors:</TextBlock>
-
                 </Grid>
                 <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="20 10 0 0"></Canvas>
             </StackPanel>

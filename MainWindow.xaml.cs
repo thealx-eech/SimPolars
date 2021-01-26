@@ -64,6 +64,8 @@ namespace Simvars
                 graphYstart.Text = (string)settings.GetValue("sink_min_ms");
                 graphYend.Text = (string)settings.GetValue("sink_max_ms");
                 graphBgImagePath.Text = (string)settings.GetValue("polar_image");
+                int.TryParse((string)settings.GetValue("speed_measurement"), out int speed_measurement);
+                speedMeasurement.SelectedIndex = speed_measurement;
 
                 graphBgImagePath.TextChanged += new TextChangedEventHandler(graphBgImagePath_changed);
 
@@ -157,6 +159,15 @@ namespace Simvars
             if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
             {
                 oBaseSimConnectWrapper.updateSetting("polar_image", graphBgImagePath.Text);
+            }
+        }
+
+        private void speedMeasurement_changed(object Sender, SelectionChangedEventArgs e)
+        {
+            Console.WriteLine("speedMeasurement changed " + speedMeasurement.SelectedIndex.ToString());
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("speed_measurement", speedMeasurement.SelectedIndex.ToString());
             }
         }
 
