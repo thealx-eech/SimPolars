@@ -617,7 +617,7 @@ namespace Simvars
         // ************************
         private double speed_kph_to_x(double speed_kph)
         {
-            return (speed_kph - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX;
+            return (speed_kph - (double)settings.GetValue("airspeed_min_kph")) * canvasUnitX;
         }
 
         private double sink_ms_to_y(double sink_ms)
