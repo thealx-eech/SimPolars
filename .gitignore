@@ -2,3 +2,5 @@
 obj/
 *.pdb
 
+*.7z
+*.zip

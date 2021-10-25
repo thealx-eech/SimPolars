@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -11,11 +10,11 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Threading;
 
 using Microsoft.FlightSimulator.SimConnect;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
+using System.Windows.Input;
 
 namespace Simvars
 {
@@ -28,9 +27,21 @@ namespace Simvars
         public double AirspeedIndicated;
         public double VerticalSpeed;
         public double Flaps;
+        public double FlapsNum;
         public double Weight;
         public double WingArea;
+        public double Pitch;
+        public double Bank;
+        public double AoA;
+        public double rotationVelocityX;
     };
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    public struct PlaneControlsCommit
+    {
+        public double Elevator;
+        public double Aileron;
+    }
 
     public class FsDataReceivedEventArgs : EventArgs
     {
@@ -47,12 +58,14 @@ namespace Simvars
 
     public enum DEFINITION
     {
-        Dummy = 0
+        Dummy = 0,
+        Commit = 1
     };
 
     public enum REQUEST
     {
-        Dummy = 0
+        Dummy = 0,
+        Commit = 1
     };
 
     public class SetValueItem
@@ -120,6 +133,7 @@ namespace Simvars
         private static PlaneInfoResponse _planeInfoResponse;
         private static PlaneInfoResponse _planeInfoResponseOld;
 
+        private static PlaneControlsCommit _planeControlsCommit;
 
         #region IBaseSimConnectWrapper implementation
 
@@ -134,11 +148,14 @@ namespace Simvars
 
 
         private bool captureActive = true;
+        private double autotrimCounter = 0;
 
         private Dictionary<int, double>[] capturedDataArray = new Dictionary<int, double>[24];
 
         private double canvasUnitX; // Initilized in SimvarsViewModel constructor.
         private double canvasUnitY;
+
+        Point[] controlPoints;
 
         // ****************************************************************************************************
         // ****************************************************************************************************
@@ -166,6 +183,13 @@ namespace Simvars
                 settings = new JObject();
             }
 
+            // ADD MISSING VARIABLES
+            foreach (string variable in new string[] { "airspeed_min_kph", "airspeed_max_kph", "sink_min_ms", "sink_max_ms", "polar_image", "speed_measurement", "precision", "forceHorizontalFlight", "hidePoints", "curveResolution", "stallBreakpoint" })
+            {
+                if (!settings.ContainsKey(variable))
+                    settings.Add(variable, 1);
+            }
+
             // Setting up background polar image
             background_ib = new ImageBrush();
             background_ib.Stretch = Stretch.Fill;
@@ -181,8 +205,10 @@ namespace Simvars
             cmdToggleResetFlap = new BaseCommand((p) => { ToggleResetFlap(); });
             cmdToggleLoad = new BaseCommand((p) => { ToggleLoad(); });
             cmdToggleSave = new BaseCommand((p) => { ToggleSave(); });
+            cmdToggleSaveFlap = new BaseCommand((p) => { ToggleSave((int) _planeInfoResponse.Flaps); });
             cmdAddRequest = new BaseCommand((p) => { AddRequest(null, null); });
             cmdRemoveSelectedRequest = new BaseCommand((p) => { RemoveSelectedRequest(); });
+            cmdToggleAverageFlapResult = new BaseCommand((p) => { ToggleAverageFlapResult(); });
             cmdTrySetValue = new BaseCommand((p) => { TrySetValue(); });
             cmdSetValuePerm = new BaseCommand((p) => { SetValuePerm(); });
             cmdLoadFiles = new BaseCommand((p) => { LoadFiles(); });
@@ -258,14 +284,34 @@ namespace Simvars
         {
             SimvarRequest oSimvarRequest = new SimvarRequest
             {
-                eDef = (DEFINITION)m_iCurrentDefinition,
-                eRequest = (REQUEST)m_iCurrentRequest,
+                eDef = DEFINITION.Dummy,
+                eRequest = REQUEST.Dummy,
                 sName = "FLIGHT DATA",
                 sUnits = "array",
                 dValue = 0
             };
 
-            oSimvarRequest.bPending = ! RegisterDataDefinition<PlaneInfoResponse>((DEFINITION)m_iCurrentDefinition);
+            oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>(DEFINITION.Dummy, getSimvarRequests(DEFINITION.Dummy, REQUEST.Dummy));
+            oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+
+            lSimvarRequests.Add(oSimvarRequest);
+
+            Console.WriteLine("AddFlightDataRequest def" + m_iCurrentDefinition + " req" + m_iCurrentRequest);
+
+            ++m_iCurrentDefinition;
+            ++m_iCurrentRequest;
+
+            oSimvarRequest = new SimvarRequest
+            {
+                eDef = DEFINITION.Commit,
+                eRequest = REQUEST.Commit,
+                sName = "CONSTROLS COMMIT",
+                sUnits = "array",
+                dValue = 0
+            };
+
+            
+            oSimvarRequest.bPending = !RegisterDataDefinition<PlaneControlsCommit>(DEFINITION.Commit, getCommitRequests(DEFINITION.Commit, REQUEST.Commit));
             oSimvarRequest.bStillPending = oSimvarRequest.bPending;
 
             lSimvarRequests.Add(oSimvarRequest);
@@ -422,6 +468,8 @@ namespace Simvars
         public BaseCommand cmdToggleResetFlap { get; private set; }
         public BaseCommand cmdToggleLoad { get; private set; }
         public BaseCommand cmdToggleSave { get; private set; }
+        public BaseCommand cmdToggleSaveFlap { get; private set; }
+        public BaseCommand cmdToggleAverageFlapResult { get; private set; }
         public BaseCommand cmdSaveSettings { get; private set; }
         public BaseCommand cmdAddRequest { get; private set; }
         public BaseCommand cmdRemoveSelectedRequest { get; private set; }
@@ -431,6 +479,8 @@ namespace Simvars
         public BaseCommand cmdSaveFile { get; private set; }
 
         public MainWindow parent;
+
+        static double vsCompensation = 0;
 
         #endregion
 
@@ -470,6 +520,11 @@ namespace Simvars
             }
         }
 
+        void ToggleAverageFlapResult()
+        {
+            Render(0, true);
+        }
+
         private void SimConnect_OnRecvOpen(SimConnect sender, SIMCONNECT_RECV_OPEN data)
         {
             Console.WriteLine("SimConnect_OnRecvOpen, Connected to KH");
@@ -482,9 +537,14 @@ namespace Simvars
             {
                 if (oSimvarRequest.bPending)
                 {
-                    if (oSimvarRequest.eDef == 0)
+                    if (oSimvarRequest.eDef == DEFINITION.Dummy)
                     {
-                        oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>(oSimvarRequest.eDef);
+                        oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>(oSimvarRequest.eDef, getSimvarRequests(oSimvarRequest.eDef, oSimvarRequest.eRequest));
+                        oSimvarRequest.bStillPending = oSimvarRequest.bPending;
+                    }
+                    else if (oSimvarRequest.eDef == DEFINITION.Commit)
+                    {
+                        oSimvarRequest.bPending = !RegisterDataDefinition<PlaneInfoResponse>(oSimvarRequest.eDef, getCommitRequests(oSimvarRequest.eDef, oSimvarRequest.eRequest));
                         oSimvarRequest.bStillPending = oSimvarRequest.bPending;
                     }
                     else
@@ -512,20 +572,24 @@ namespace Simvars
         {
             try
             {
+                parent = (MainWindow)System.Windows.Application.Current.MainWindow;
                 //Console.WriteLine("Received request #" + e.RequestId + " value " + JsonConvert.SerializeObject(e.Data, Formatting.Indented));
 
                 if (e.RequestId == 0) // FLIGHT DATA
                 {
-                    if (!captureActive)
-                    {
-                        //Console.WriteLine("FLIGHT DATA captureActive: " + captureActive);
-                    }
                     _planeInfoResponseOld = _planeInfoResponse;
                     _planeInfoResponse = (PlaneInfoResponse)e.Data;
                     lSimvarRequests[0].bPending = false;
                     lSimvarRequests[0].bStillPending = false;
+
                     if (captureActive)
                     {
+                        // RENDER FLAPS
+                        if (_planeInfoResponse.FlapsNum != 0)
+                        {
+                            addFlapLegend((int)_planeInfoResponse.FlapsNum, (int)_planeInfoResponse.Flaps);
+                        }
+
                         double AbsoluteTimeDelta = 0;
                         if (_planeInfoResponse.AbsoluteTime != 0 && _planeInfoResponseOld.AbsoluteTime != 0)
                         {
@@ -543,6 +607,8 @@ namespace Simvars
                             //AbsoluteTimeDelta > 0.1 &&
                             //AbsoluteTimeDelta < 0.12)
                         {
+                            //Console.WriteLine("FLIGHT DATA captureActive: " + captureActive);
+
                             //Console.Write("Capture " + (int)_planeInfoResponse.AirspeedTrue + " / " + sink);
                             if (capturedDataArray[(int)_planeInfoResponse.Flaps] == null)
                             {
@@ -556,7 +622,7 @@ namespace Simvars
                                 te_raw_ms *= _planeInfoResponse.AirspeedIndicated / _planeInfoResponse.AirspeedTrue;
                             }
                             double glide_ratio = te_raw_ms > -0.1 ? 99 : airspeed_ms / -te_raw_ms;
-                            Console.WriteLine(String.Format("{0:n6},s,{1,7:n3},kph @ ,{2:n3},m / ,{3,7:n3},kph @ ,{4:n3},m = te:,{5,6:n2}, ( vsi:,{6,6:n2}, + comp:,{7,6:n2}, ) L/D=,{8,5:n1}, flap=,{9},{10},kg",
+                            /*Console.WriteLine(String.Format("{0:n6} s,{1,7:n3} kph @ ,{2:n3} m / {3,7:n3} kph @ {4:n3} m = te:{5,6:n2}, vsi: {6,6:n2}, + comp {7,6:n2} ) L/D={8,5:n1}, flap={9}, weight={10}kg",
                                                 AbsoluteTimeDelta,
                                                 airspeed_ms * 3.6, // m/s -> kph
                                                 _planeInfoResponseOld.Altitude,
@@ -568,27 +634,94 @@ namespace Simvars
                                                 glide_ratio,
                                                 (int)_planeInfoResponse.Flaps,
                                                 (int)_planeInfoResponse.Weight
-                                                ));
-                            if (glide_ratio > 15 && glide_ratio < 70)
-                            {
-                                int airspeed_bucket = bucket(airspeed_ms);
+                                                ));*/
 
-                                                              // Alternative Smoothing ratio is variable 0.7 .. 0.9 depending on acceleration (te_compensation)
-                                double SMOOTHING_RATIO = 0.9; // Math.Min(0.7 + Math.Abs(te_compensation) * 0.2 / 3,0.9); // 0.9;
+                            //if (glide_ratio > 5 && glide_ratio < 100)
+                            if (airspeed_ms * 3.6 >= (double)settings.GetValue("airspeed_min_kph") && airspeed_ms * 3.6 <= (double)settings.GetValue("airspeed_max_kph") &&
+                                -te_raw_ms > 0 && -te_raw_ms <= (double)settings.GetValue("sink_max_ms"))
+                            {
+                                int airspeed_bucket = bucket(airspeed_ms / (double)settings.GetValue("precision"));
+
+                                // Alternative Smoothing ratio is variable 0.7 .. 0.9 depending on acceleration (te_compensation)
+                                double SMOOTHING_RATIO = 0.5; // Math.Min(0.7 + Math.Abs(te_compensation) * 0.2 / 3,0.9); // 0.9;
 
                                 capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] = capturedDataArray[(int)_planeInfoResponse.Flaps].ContainsKey(airspeed_bucket)
                                     ? SMOOTHING_RATIO * capturedDataArray[(int)_planeInfoResponse.Flaps][airspeed_bucket] + (1 - SMOOTHING_RATIO) * te_raw_ms : te_raw_ms;
 
                                 Render(airspeed_ms * 3.6);
+
+                                //Console.WriteLine("FLIGHT DATA captured value: " + airspeed_bucket);
+                            }
+                            else
+                            {
+                                //Console.WriteLine("FLIGHT DATA capture skipped, glide_ratio: " + glide_ratio);
                             }
 
                             if (variableTimer == true)
                             {
                                 SetVariableTiming(airspeed_ms, airspeed_old, AbsoluteTimeDelta);
                             }
+
+                            // FORCE HORIZINTAL FLIGHT
+                            if ((string)settings["forceHorizontalFlight"] == "true" && AbsoluteTimeDelta != 0 && Math.Abs(_planeInfoResponse.Pitch) < 10 && Math.Abs(_planeInfoResponse.rotationVelocityX) < 10)
+                            {
+                                parent.forceHorizontalFlight.Background = new SolidColorBrush(Colors.LightGreen);
+
+                                vsCompensation -= Math.Sign(_planeInfoResponse.VerticalSpeed) *  Math.Pow(Math.Abs(_planeInfoResponse.VerticalSpeed), 0.5) * AbsoluteTimeDelta;
+                                vsCompensation = Math.Max(-50, Math.Min(50, vsCompensation));
+
+                                // STALL
+                                //if (captureActive == true && airspeed_ms * 3.6 < 100 && glide_ratio < 10) // DISABLE CAPTURE
+                                if (180 - Math.Abs(_planeInfoResponse.AoA) > (double)settings.GetValue("stallBreakpoint"))
+                                {
+                                    _planeControlsCommit.Aileron = 0;
+                                    _planeControlsCommit.Elevator = 0;
+
+                                    m_oSimConnect.SetDataOnSimObject(DEFINITION.Commit, SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, _planeControlsCommit);
+
+                                    //parent.forceHorizontalFlight.IsChecked = false;
+                                    //updateSetting("forceHorizontalFlight", "false");
+                                    ToggleConnect();
+                                }
+                                // AUTOTRIM
+                                else
+                                {
+                                    double trimLimit = 50;//airspeed_ms * 3.6 < 100 ? 50 : 7.5;
+                                    double newAileron = Math.Max(-trimLimit, Math.Min(trimLimit, Math.Sign(_planeInfoResponse.Bank) * Math.Pow(Math.Abs(_planeInfoResponse.Bank), 2)));
+                                    double newElevator = Math.Max(-trimLimit, Math.Min(trimLimit, 2 * _planeInfoResponse.Pitch + 1 + vsCompensation));
+
+                                    _planeControlsCommit.Aileron = newAileron;
+                                    double elevatorDelta = newElevator - _planeControlsCommit.Elevator;
+
+                                    // RESET TO ZERO
+                                    if (_planeControlsCommit.Elevator < 0 && newElevator > 0 || _planeControlsCommit.Elevator > 0 && newElevator < 0)
+                                        _planeControlsCommit.Elevator = 0;
+                                    else
+                                        _planeControlsCommit.Elevator += Math.Min(Math.Max(elevatorDelta * autotrimCounter, -10), 10) * AbsoluteTimeDelta;
+
+                                    if (_planeControlsCommit.Elevator < -10)
+                                    {
+                                        _planeControlsCommit.Elevator = -10;
+                                    }
+
+                                    m_oSimConnect.SetDataOnSimObject(DEFINITION.Commit, SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, _planeControlsCommit);
+                                }
+
+                                if (autotrimCounter < 1)
+                                    autotrimCounter = Math.Min(1, autotrimCounter + AbsoluteTimeDelta / 5);
+                            }
+                            else
+                            {
+                                parent.forceHorizontalFlight.Background = new SolidColorBrush(Colors.LightPink);
+                            }
                         }
+
                     }
 
+                }
+                else if (e.RequestId == 1)
+                {
+                    _planeControlsCommit = (PlaneControlsCommit)e.Data;
                 }
                 else // CUSTOM VARS
                 {
@@ -626,19 +759,13 @@ namespace Simvars
             return -(sink_ms + (double)settings.GetValue("sink_min_ms")) * canvasUnitY;
         }
 
-        public void Render(double current_speed_kph)
+        public void Render(double current_speed_kph, bool stall_line = false)
         {
             parent = (MainWindow)System.Windows.Application.Current.MainWindow;
             if (parent.captureCanvas != null)
             {
                 parent.captureCanvas.Children.Clear();
                 parent.captureCanvas.Focus();
-                parent.captureLabels.Children.Clear();
-
-                /*if (captureActive == true && airspeedTrue * 3.6 < canvasXstart) // DISABLE CAPTURE
-                {
-                    ToggleCapture();
-                }*/
 
                 double canvasWidth = parent.captureCanvas.Width;
                 double canvasHeight = parent.captureCanvas.Height;
@@ -688,26 +815,92 @@ namespace Simvars
                 {
                     if (capturedData != null && capturedData.Count > 0)
                     {
-                        addFlapLegend(index - 1);
+                        int vindex = 0;
 
                         Color color = getFlapColor(index - 1);
+                        color.A = 128;
 
-                        foreach (var capturedValue in capturedData)
+                        double prevTE = -1;
+
+                        SortedDictionary<int, double> sortedCapturedData = new SortedDictionary<int, double>(capturedData);
+                        Point[] points = new Point[sortedCapturedData.Count];
+                        foreach (var capturedValue in sortedCapturedData)
                         {
-                            double airspeed_kph = capturedValue.Key * 3.6;
+                            double airspeed_kph = capturedValue.Key * 3.6 * (double)settings.GetValue("precision");
                             double te = capturedValue.Value;
-                            if (airspeed_kph >= (double)settings.GetValue("airspeed_min_kph") && airspeed_kph <= (double)settings.GetValue("airspeed_max_kph") && (-te) >= (double)settings.GetValue("sink_min_ms") && (-te) <= (double)settings.GetValue("sink_max_ms"))
+
+                            double x1 = (airspeed_kph + 0.01 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX;
+                            double x2 = (airspeed_kph + 0.6 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX;
+                            double y1 = (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY;
+                            double y2 = (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY;
+
+                            if (((string)settings.GetValue("hidePoints") != "true" || !stall_line) && airspeed_kph >= (double)settings.GetValue("airspeed_min_kph") && airspeed_kph <= (double)settings.GetValue("airspeed_max_kph") && (-te) >= (double)settings.GetValue("sink_min_ms") && (-te) <= (double)settings.GetValue("sink_max_ms"))
                             {
-                                parent.captureCanvas.Children.Add(getGraphLine(color,                                               // color
-                                                                                (airspeed_kph + 0.01 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX, // x1
-                                                                                (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y1
-                                                                                (airspeed_kph + 3.6 - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX,    // x2
-                                                                                (-te + 0.02 - (double)settings.GetValue("sink_min_ms")) * canvasUnitY,                    // y2
+                                Line point = getGraphLine(color,                                               // color
+                                                                                x1,
+                                                                                y1,
+                                                                                x2,
+                                                                                y2,
                                                                                 canvasWidth,                                         // width
                                                                                 canvasHeight,                                        // height
-                                                                                3));                                                 // thickness
-                                                                                                                                     //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX + " " + (-te - Math.Ceiling(canvasYstart)) * canvasUnitY);
+                                                                                3);                                                 // thickness
+
+                                point.Tag = (index-1) + "-" + capturedValue.Key;
+                                point.MouseDown += new MouseButtonEventHandler(removePoint);
+                                point.Cursor = Cursors.No;
+                                parent.captureCanvas.Children.Add(point);
+                                //Console.WriteLine(airspeed + " " + te + " / " + (airspeed - Math.Ceiling((double)settings.GetValue("airspeed_min_kph"))) * canvasUnitX + " " + (-te - Math.Ceiling(canvasYstart)) * canvasUnitY);
                             }
+
+                            prevTE = te;
+
+                            // PREPARE CURVE DATA
+                            if (stall_line)
+                            {
+                                points[vindex] = new Point(x1 * canvasWidth, y1 * canvasHeight);
+                                Console.WriteLine($"Point added: {x1 * canvasWidth:f2} {y1 * canvasHeight:F2}");
+                            }
+
+                            vindex++;
+                        }
+
+
+                        // RENDER CURVE
+                        if (stall_line)
+                        {
+                            Console.WriteLine("a");
+                            controlPoints = points;
+                            var b = GetBezierApproximation((int)settings.GetValue("curveResolution"));
+                            Console.WriteLine("b");
+                            PathFigure pf = new PathFigure(b.Points[0], new[] { b }, false);
+                            PathFigureCollection pfc = new PathFigureCollection();
+                            pfc.Add(pf);
+                            Console.WriteLine("c");
+                            var pge = new PathGeometry();
+                            pge.Figures = pfc;
+                            System.Windows.Shapes.Path p = new System.Windows.Shapes.Path();
+                            Console.WriteLine("d");
+                            p.Data = pge;
+                            color.A = 255;
+                            p.Stroke = new SolidColorBrush(color);
+                            p.StrokeThickness = 2;
+                            parent.captureCanvas.Children.Add(p);
+
+                            // STALL CAPTURE
+
+                            /*Point prevPoint = new Point();
+                            foreach(Point pnt in b.Points)
+                            {
+                                if (prevPoint.X != 0 && prevPoint.Y != 0 && prevPoint.Y < pnt.Y)
+                                {
+                                    double stallSpeed = (double)settings.GetValue("stallBreakpoint") / 100 * prevPoint.X / canvasWidth;
+                                    parent.captureCanvas.Children.Add(getGraphLine(color, stallSpeed, 0, stallSpeed, 2, canvasWidth, canvasHeight, 2));
+                                    Console.WriteLine("STALL for FLAP#" + (index - 1) + ": " + stallSpeed + "km/h");
+                                    break;
+                                }
+
+                                prevPoint = pnt;
+                            }*/
                         }
                     }
                     index++;
@@ -850,10 +1043,14 @@ namespace Simvars
             Render(0);
         }
 
+
         private void ToggleReset()
         {
-            capturedDataArray = new Dictionary<int, double>[24];
-            Render(0);
+            if (MessageBox.Show("It will clear ALL data", "Are you sure?", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            {
+                capturedDataArray = new Dictionary<int, double>[24];
+                Render(0);
+            }
         }
 
         private void getCanvasTextLabel(Canvas cv, Color color, double x1, double y1, string text)
@@ -884,34 +1081,57 @@ namespace Simvars
 
         private void updateLegendLabel()
         {
-            TextBlock legend_label;
             if (_planeInfoResponse.Weight > 0 && _planeInfoResponse.Weight > 0)
             {
-                legend_label = getTextBlock(Colors.Black, (_planeInfoResponse.Weight / _planeInfoResponse.WingArea).ToString("#.#") + "kg/m2   Flaps:");
+                parent.LegendLabel.Text = (_planeInfoResponse.Weight / _planeInfoResponse.WingArea).ToString("#.#") + "kg/m2   Flaps:";
             }
             else
             {
-                legend_label = getTextBlock(Colors.Black, (int)_planeInfoResponse.Weight + "kg Flaps:");
+                parent.LegendLabel.Text = (int)_planeInfoResponse.Weight + "kg Flaps:";
             }
-
-            Grid.SetColumn(legend_label, 0);
-            Grid.SetRow(legend_label, 0);
-
-            //Console.WriteLine(color.ToString());
-            parent.captureLabels.Children.Add(legend_label);
         }
 
-        private void addFlapLegend(int flap_index)
+        private void addFlapLegend(int flaps, int current = -1)
         {
-            Color color = getFlapColor(flap_index);
+            parent.captureLabels.Children.Clear();
+            for (int flap_index = 0; flap_index <= flaps; flap_index++)
+            {
+                Color color = getFlapColor(flap_index);
 
-            TextBlock legend_item = getTextBlock(color, "Flap #" + flap_index);
+                Button legend_item = new Button();
+                legend_item.Content = "Flap #" + flap_index;
+                legend_item.Tag = flap_index;
+                legend_item.Foreground = new SolidColorBrush(color);
+                legend_item.Background = new SolidColorBrush(Colors.Transparent);
+                legend_item.BorderThickness = new Thickness(0);
 
-            Grid.SetColumn(legend_item, flap_index + 1);
-            Grid.SetRow(legend_item, 0);
+                legend_item.HorizontalAlignment = HorizontalAlignment.Center;
+                Border legend_item_border = new Border();
+                legend_item_border.Child = legend_item;
 
-            //Console.WriteLine(color.ToString());
-            parent.captureLabels.Children.Add(legend_item);
+                if (current == flap_index)
+                {
+                    legend_item_border.BorderBrush = new SolidColorBrush(Colors.Red);
+                    legend_item_border.BorderThickness = new Thickness(2);
+                }
+
+                legend_item.Cursor = Cursors.Hand;
+                legend_item.Click += new RoutedEventHandler(flapChange);
+
+                Grid.SetColumn(legend_item_border, flap_index);
+                Grid.SetRow(legend_item_border, 0);
+
+                //Console.WriteLine(color.ToString());
+                parent.captureLabels.Children.Add(legend_item_border);
+            }
+        }
+        void flapChange(Object sender, EventArgs e)
+        {
+            Button clickedButton = (Button)sender;
+            if (clickedButton.Tag != null && int.TryParse(clickedButton.Tag.ToString(), out int flap)) {
+                _planeInfoResponse.Flaps = flap;
+                addFlapLegend((int)_planeInfoResponse.FlapsNum, (int)_planeInfoResponse.Flaps);
+            }
         }
 
         private TextBlock getTextBlock(Color color, string text)
@@ -938,25 +1158,97 @@ namespace Simvars
 
         private void ToggleLoad()
         {
+            if (MessageBox.Show("It will clear current flap data", "Are you sure?", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            {
+                int currentFlap = (int)_planeInfoResponse.Flaps;
 
+                System.Windows.Forms.OpenFileDialog openFileDialog1 = new System.Windows.Forms.OpenFileDialog();
+                openFileDialog1.Filter =
+                    "JSON|*.JSON;|" +
+                    "All files (*.*)|*.*";
+                openFileDialog1.Multiselect = true;
+                openFileDialog1.Title = "Select polar data files";
+
+                List<Dictionary<int, double>> newData = new List<Dictionary<int, double>>();
+
+                System.Windows.Forms.DialogResult dr = openFileDialog1.ShowDialog();
+                // Set the file dialog to filter for graphics files.
+
+                if (dr == System.Windows.Forms.DialogResult.OK)
+                {
+                    foreach (String file in openFileDialog1.FileNames)
+                    {
+                        try
+                        {
+                            newData.Add(JsonConvert.DeserializeObject<Dictionary<int, double>>(File.ReadAllText(file)));
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show(ex.Message);
+                        }
+                    }
+
+                    Dictionary<int, double> newDict = new Dictionary<int, double>();
+
+                    for (int i = 0; i < 10000; i++)
+                    {
+                        double total = 0;
+                        int count = 0;
+
+                        foreach (Dictionary<int, double> data in newData)
+                        {
+                            if (data.ContainsKey(i))
+                            {
+                                total += data[i];
+                                count++;
+                            }
+                        }
+
+                        if (count > 0)
+                            newDict.Add(i, total / count);
+                    }
+
+                    capturedDataArray[currentFlap] = newDict;
+                    Render(0);
+                }
+            }
         }
 
-        private void ToggleSave()
+        private void ToggleSave(int spoiler = -1)
         {
             int index = 0;
+            int counter = 0;
+
+            string date = DateTime.Now.ToString("dd.MM.yyyy");
+            string time = DateTime.Now.ToString("HH-mm-ss");
+
+            if (!Directory.Exists(BASE_DIRECTORY + "\\save_data " + date)) {
+                try
+                {
+                    Directory.CreateDirectory(BASE_DIRECTORY + "\\save_data " + date);
+                }
+                catch(Exception ex) { MessageBox.Show(ex.Message); }
+            }
+
             foreach (var capturedData in capturedDataArray)
             {
                 if (capturedData != null && capturedData.Count > 0)
                 {
-                    try
+                    if (spoiler == -1 || spoiler == index)
                     {
-                        File.WriteAllText(BASE_DIRECTORY + "\\save_data_flaps"+index+".json", JsonConvert.SerializeObject(capturedData));
+                        try
+                        {
+                            File.WriteAllText(BASE_DIRECTORY + "\\save_data " + date + "\\save_data_flap_" + index.ToString("00") + " " + time + ".json", JsonConvert.SerializeObject(capturedData));
+                            counter++;
+                        }
+                        catch (Exception ex) { MessageBox.Show(ex.Message); }
                     }
-                    catch { }
                 }
 
                 index++;
             }
+
+            MessageBox.Show(counter + " files saved into folder " + BASE_DIRECTORY + "\\save_data " + date + "\\");
         }
 
 
@@ -987,11 +1279,11 @@ namespace Simvars
             }
         }
 
-        public bool RegisterDataDefinition<T>(Enum id) where T : struct
+        public bool RegisterDataDefinition<T>(Enum id, List<SimvarRequest> requests) where T : struct
         {
             if (m_oSimConnect != null)
             {
-                foreach (var simvar_request in getSimvarRequests((DEFINITION)id, (REQUEST)id))
+                foreach (var simvar_request in requests)
                 {
                     m_oSimConnect.AddToDataDefinition(id, simvar_request.sName, simvar_request.sUnits, SIMCONNECT_DATATYPE.FLOAT64, 0.0f, SimConnect.SIMCONNECT_UNUSED);
                 }
@@ -1017,9 +1309,24 @@ namespace Simvars
             oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "AIRSPEED INDICATED", sUnits = "meters per second", dValue = 0 });
             oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "VERTICAL SPEED", sUnits = "meters per second", dValue = 0 });
             oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "FLAPS HANDLE INDEX", sUnits = "enum", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "FLAPS NUM HANDLE POSITIONS", sUnits = "enum", dValue = 0 });
             oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "TOTAL WEIGHT", sUnits = "kilogram", dValue = 0 });
             oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "WING AREA", sUnits = "meters", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "PLANE PITCH DEGREES", sUnits = "degree", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "PLANE BANK DEGREES", sUnits = "degree", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "ANGLE OF ATTACK INDICATOR", sUnits = "degree", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "ROTATION VELOCITY BODY X", sUnits = "degree per second", dValue = 0 });
 
+            return oSimvarRequests;
+        }
+
+        private List<SimvarRequest> getCommitRequests(DEFINITION definition, REQUEST request)
+        {
+            List<SimvarRequest> oSimvarRequests = new List<SimvarRequest>();
+
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "ELEVATOR TRIM POSITION", sUnits = "degree", dValue = 0 });
+            oSimvarRequests.Add(new SimvarRequest { eDef = definition, eRequest = request, sName = "AILERON POSITION", sUnits = "degree", dValue = 0 });
+            
             return oSimvarRequests;
         }
 
@@ -1167,18 +1474,30 @@ namespace Simvars
         public bool updateSetting(string setting_key, string setting_value)
         {
             Console.WriteLine("updateSetting " + setting_key + " to " + setting_value);
+
+            if (!settings.ContainsKey(setting_key))
+                settings.Add(setting_key);
+
             switch (setting_key)
             {
                 case "airspeed_min_kph":
                 case "airspeed_max_kph":
                 case "sink_min_ms":
                 case "sink_max_ms":
+                case "precision":
+                case "stallBreakpoint":
                     settings[setting_key] = double.Parse(setting_value);
                     break;
                 case "polar_image":
                     settings[setting_key] = setting_value;
                     break;
+                case "forceHorizontalFlight":
+                case "hidePoints":
+                    settings[setting_key] = setting_value;
+                    autotrimCounter = 0;
+                    break;
                 case "speed_measurement":
+                case "curveResolution":
                     settings[setting_key] = int.Parse(setting_value);
                     break;
                 default:
@@ -1187,6 +1506,9 @@ namespace Simvars
             }
             handleSettingsChange();
             Render(0);
+
+            SaveSettings();
+
             return true;
         }
 
@@ -1217,6 +1539,7 @@ namespace Simvars
                 }
                 else
                 {
+                    background_available = false;
                     Console.WriteLine("Polar image: " + polar_filename + " not found!");
                     MessageBox.Show("Polar image: "+polar_filename + " not found!");
                 }
@@ -1231,6 +1554,7 @@ namespace Simvars
         {
             string settings_str = System.IO.File.ReadAllText(_sFileName);
             settings = JObject.Parse(settings_str);
+
             Console.WriteLine("Settings loaded from " + _sFileName);
         }
 
@@ -1283,6 +1607,82 @@ namespace Simvars
             SetTickSliderValue(timer);
         }
 
+        Point[,,] BezierPoints;
+        int pointsProcessed = 0;
+        PolyLineSegment GetBezierApproximation(int outputSegmentCount)
+        {
+            Point[] points = new Point[outputSegmentCount + 1];
+            BezierPoints = new Point[outputSegmentCount + 1, controlPoints.Length+1, controlPoints.Length+1];
+
+            if (outputSegmentCount > 0)
+            {
+                for (int i = 0; i <= outputSegmentCount; i++)
+                {
+                    double t = (double)i / outputSegmentCount;
+
+                    Console.WriteLine($"Starting segment: t {t:F3} " + DateTime.Now.ToString("HH:mm:ss"));
+
+                    try
+                    {
+                        points[i] = GetBezierPoint(i, t, 0, controlPoints.Length);
+                    }
+                    catch (Exception e) {
+                        Console.WriteLine(e.Message);
+                    }
+
+                    Console.WriteLine("Points processed: " + pointsProcessed);
+                    pointsProcessed = 0;
+                }
+            }
+
+            return new PolyLineSegment(points, true);
+        }
+
+        Point GetBezierPoint(int i, double t, int index, int count)
+        {
+            pointsProcessed++;
+            //Console.WriteLine($"Interaction: t {t:F3} / index {index} / count {count} " + DateTime.Now.ToString("HH:mm:ss"));
+
+            if (count == 1)
+            {
+                BezierPoints[i, index, count] = controlPoints[index];
+                return controlPoints[index];
+            }
+
+            if (BezierPoints[i, index, count].X != 0 && BezierPoints[i, index, count].Y != 0)
+                return BezierPoints[i, index, count];
+
+            //System.Threading.Tasks.Parallel.For(0, 1, i =>
+            //{
+            Point P0 = count - 1 == 1 ? controlPoints[index] : GetBezierPoint(i, t, index, count - 1);
+            Point P1 = count - 1 == 1 ? controlPoints[index + 1] : GetBezierPoint(i, t, index + 1, count - 1);
+            //});
+
+            Point result = new Point((1 - t) * P0.X + t * P1.X, (1 - t) * P0.Y + t * P1.Y);
+            BezierPoints[i, index, count] = result;
+
+            return result;
+        }
+
+        void removePoint(object sender, MouseButtonEventArgs e)
+        {
+            // Change line colour back to normal 
+            string[] atts = ((Line)sender).Tag.ToString().Split('-');
+            int index = int.Parse(atts[0]);
+            int key = int.Parse(atts[1]);
+
+            if (capturedDataArray.Length > index && capturedDataArray[index] != null && capturedDataArray[index].ContainsKey(key))
+                capturedDataArray[index].Remove(key);
+            else
+            {
+                Console.WriteLine("Failed to remove point " + index + " / " + key);
+            }
+
+            Render(0);
+        }
+
     } // end class SimvarsViewModel
 
 } // end namespace Simvars
+
+

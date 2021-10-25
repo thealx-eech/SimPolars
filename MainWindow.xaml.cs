@@ -1,6 +1,5 @@
 ﻿using Microsoft.Win32;
 using System;
-using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -23,7 +22,7 @@ namespace Simvars
         void SetWindowHandle(IntPtr _hWnd);
         void Disconnect();
         void AddFlightDataRequest();
-        void Render(double airspeed_kph);
+        void Render(double airspeed_kph, bool stall_line = false);
         JObject getSettings();
         bool updateSetting(string setting_key, string setting_value);
     }
@@ -64,8 +63,18 @@ namespace Simvars
                 graphYstart.Text = (string)settings.GetValue("sink_min_ms");
                 graphYend.Text = (string)settings.GetValue("sink_max_ms");
                 graphBgImagePath.Text = (string)settings.GetValue("polar_image");
-                int.TryParse((string)settings.GetValue("speed_measurement"), out int speed_measurement);
-                speedMeasurement.SelectedIndex = speed_measurement;
+                forceHorizontalFlight.IsChecked = (string)settings.GetValue("forceHorizontalFlight") == "true";
+                HidePoints.IsChecked = (string)settings.GetValue("hidePoints") == "true";
+
+                if (int.TryParse((string)settings.GetValue("speed_measurement"), out int speed_measurement))
+                {
+                    speedMeasurement.SelectedIndex = speed_measurement;
+                }
+
+                setComboboxValue(measurementPrecision, (string)settings.GetValue("precision"));
+                stallBreakpoint.Text = (string)settings.GetValue("stallBreakpoint");
+                setComboboxValue(curveResolution, (string)settings.GetValue("curveResolution"));
+
 
                 graphBgImagePath.TextChanged += new TextChangedEventHandler(graphBgImagePath_changed);
 
@@ -75,6 +84,21 @@ namespace Simvars
 
                 oBaseSimConnectWrapper.Render(0);
 
+            }
+        }
+
+        void setComboboxValue(ComboBox cb, string value)
+        {
+            int index = 0;
+            foreach (ComboBoxItem item in cb.Items)
+            {
+                if (item.Tag != null && item.Tag.ToString() == value)
+                {
+                    cb.SelectedIndex = index;
+                    break;
+                }
+
+                index++;
             }
         }
 
@@ -171,6 +195,54 @@ namespace Simvars
             }
         }
 
+        private void precision_changed(object Sender, SelectionChangedEventArgs e)
+        {
+            Console.WriteLine("precision changed " + ((ComboBoxItem)measurementPrecision.SelectedItem).Tag.ToString());
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("precision", ((ComboBoxItem)measurementPrecision.SelectedItem).Tag.ToString());
+            }
+        }
+
+        private void stallBreakpoint_LostFocus(object sender, RoutedEventArgs e)
+        {
+            Console.WriteLine("stallBreakpoint changed " + stallBreakpoint.Text);
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("stallBreakpoint", stallBreakpoint.Text);
+            }
+        }
+
+        private void curveResolution_changed(object Sender, SelectionChangedEventArgs e)
+        {
+            Console.WriteLine("curveResolution changed " + curveResolution.SelectedIndex.ToString());
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("curveResolution", ((ComboBoxItem)curveResolution.SelectedItem).Tag.ToString());
+            }
+        }
+
+
+        private void horizontal_flight_changed(object Sender, EventArgs e)
+        {
+            Console.WriteLine("horizontal flight changed " + forceHorizontalFlight.IsChecked);
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("forceHorizontalFlight", forceHorizontalFlight.IsChecked == true ? "true" : "false");
+            }
+        }
+
+        private void hide_points_changed(object Sender, EventArgs e)
+        {
+            Console.WriteLine("hide points changed " + HidePoints.IsChecked);
+            if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
+            {
+                oBaseSimConnectWrapper.updateSetting("hidePoints", HidePoints.IsChecked == true ? "true" : "false");
+                oBaseSimConnectWrapper.Render(0, true);
+            }
+
+        }
+
         private IntPtr WndProc(IntPtr hWnd, int iMsg, IntPtr hWParam, IntPtr hLParam, ref bool bHandled)
         {
             if (this.DataContext is IBaseSimConnectWrapper oBaseSimConnectWrapper)
@@ -232,6 +304,13 @@ namespace Simvars
             OpenFileDialog openFileDialog = new OpenFileDialog();
             if (openFileDialog.ShowDialog() == true)
                 graphBgImagePath.Text = openFileDialog.FileName;
+        }
+
+        public void scaleGrid(object sender, RoutedEventArgs e)
+        {
+            double value = ((Slider)sender).Value;
+            if (captureCanvas != null)
+                captureCanvas.LayoutTransform = new ScaleTransform(value, value);
         }
     } // end class MainWindow
 }

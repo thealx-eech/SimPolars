@@ -1,0 +1,15 @@
+{
+  "polar_image": "polar.png",
+  "airspeed_min_kph": 48.0,
+  "airspeed_max_kph": 221.0,
+  "sink_min_ms": -0.4,
+  "sink_max_ms": 3.78,
+  "speed_measurement": 1,
+  "precision": 0.1,
+  "horizontalFlight": "false",
+  "resultAveraging": "false",
+  "curveResolution": 256,
+  "stallBreakpoint": 40.0,
+  "hidePoints": "false",
+  "forceHorizontalFlight": "true"
+}

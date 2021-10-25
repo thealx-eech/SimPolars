@@ -58,46 +58,84 @@
                 <Grid>
                     <StackPanel Grid.Column="1" Margin="29,9,0,0" HorizontalAlignment="Left">
                         <TextBlock>Velocity axis (start / end)</TextBlock>
-                        <ComboBox Name="velocityUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                        <ComboBox Name="velocityUnits" HorizontalAlignment="Stretch" Height="26" Margin="0 10 0 10">
                             <ComboBoxItem IsSelected="True">Kilometers per hour</ComboBoxItem>
                         </ComboBox>
                         <Grid>
-                            <TextBox x:Name="graphXstart"  Margin="5,5,0,0" Width="50" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphXstart_LostFocus"></TextBox>
-                            <TextBox x:Name="graphXend" Margin="78,5,0,0.2"  Width="72" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphXend_LostFocus"></TextBox>
+                            <TextBox x:Name="graphXstart"  Margin="0,5,0,5" Width="60" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphXstart_LostFocus"></TextBox>
+                            <TextBox x:Name="graphXend" Margin="0,5,0,5" Width="60" HorizontalAlignment="Right" TextChanged="textChanged_double" LostFocus="graphXend_LostFocus"></TextBox>
                         </Grid>
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Margin="200,9,0,0" HorizontalAlignment="Left">
+                    <StackPanel Grid.Column="2" Margin="180,9,0,0" HorizontalAlignment="Left">
                         <TextBlock>Sink rate (start / end)</TextBlock>
-                        <ComboBox Name="sinkUnits" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                        <ComboBox Name="sinkUnits" HorizontalAlignment="Stretch" Height="26" Margin="0 10 0 10">
                             <ComboBoxItem IsSelected="True">Meters per second</ComboBoxItem>
                         </ComboBox>
                         <Grid>
-                            <TextBox x:Name="graphYstart" Margin="5,5,0,0" Width="50" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphYstart_LostFocus"></TextBox>
-                            <TextBox x:Name="graphYend" Margin="95,5,0,0.2" Width="55" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphYend_LostFocus"></TextBox>
+                            <TextBox x:Name="graphYstart" Margin="0,5,0,5" Width="60" HorizontalAlignment="Left" TextChanged="textChanged_double" LostFocus="graphYstart_LostFocus"></TextBox>
+                            <TextBox x:Name="graphYend" Margin="0,5,0,5" Width="60" HorizontalAlignment="Right" TextChanged="textChanged_double" LostFocus="graphYend_LostFocus"></TextBox>
                         </Grid>
                     </StackPanel>
-                    <StackPanel Grid.Column="3" Margin="400,9,0,0" HorizontalAlignment="Left">
+                    <StackPanel Grid.Column="3" Margin="320,9,0,0" HorizontalAlignment="Left">
                         <TextBlock>Speed measurement</TextBlock>
                         <ComboBox Name="speedMeasurement" SelectionChanged="speedMeasurement_changed" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
                             <ComboBoxItem>True airspeed</ComboBoxItem>
                             <ComboBoxItem>Indicated airspeed</ComboBoxItem>
                         </ComboBox>
                     </StackPanel>
+                    <StackPanel Grid.Column="3" Margin="490,9,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Precision</TextBlock>
+                        <ComboBox Name="measurementPrecision" SelectionChanged="precision_changed" HorizontalAlignment="left" Width="150" Height="26" Margin="0 10 10 10">
+                            <ComboBoxItem Tag="1">1 m/s</ComboBoxItem>
+                            <ComboBoxItem Tag="0.5">0.5 m/s</ComboBoxItem>
+                            <ComboBoxItem Tag="0.25">0.25 m/s</ComboBoxItem>
+                            <ComboBoxItem Tag="0.1">0.1 m/s</ComboBoxItem>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Margin="650,9,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Scale grid area</TextBlock>
+                        <Slider ValueChanged="scaleGrid" Margin="0 10 0 0" Value="1" Minimum="0.1" Maximum="2.0" TickFrequency="0.1" AutoToolTipPlacement="TopLeft" AutoToolTipPrecision="1"></Slider>
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Margin="750,9,0,0" HorizontalAlignment="Left">
+                        <CheckBox Click="horizontal_flight_changed" Name="forceHorizontalFlight">Force horizontal flight</CheckBox>
+                    </StackPanel>
                 </Grid>
                 <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130"/>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="100"/>
+                        <ColumnDefinition Width="100"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
                     <!-- <Button x:Name="btn_Capture" Grid.Column="1" Content="{Binding sCaptureButtonLabel}" Command="{Binding cmdToggleCapture}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="146" Height="48"/> -->
-                    <Button x:Name="btn_SaveData" Content="SAVE DATA" Command="{Binding cmdToggleSave}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_LoadData" Content="LOAD DATA" Command="{Binding cmdToggleLoad}" HorizontalAlignment="Left" Margin="135,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_Settings" Content="SAVE SETTINGS" Command="{Binding cmdSaveSettings}" HorizontalAlignment="Left" Margin="240,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_Reset" Content="RESET ALL" Command="{Binding cmdToggleReset}" HorizontalAlignment="Left" Margin="350,9,0,0" VerticalAlignment="Top" Width="96" Height="48"/>
-                    <Button x:Name="btn_ResetFlap" Content="RESET FLAP" Command="{Binding cmdToggleResetFlap}" HorizontalAlignment="Left" Margin="460,9,0,0" VerticalAlignment="Top" Width="95" Height="48"/>
+                    <Button x:Name="btn_SaveData" Content="SAVE ALL" Command="{Binding cmdToggleSave}" HorizontalAlignment="Left" Margin="29,9,0,0" VerticalAlignment="Top" Width="96" Height="48" Grid.Column="0"/>
+                    <Button x:Name="btn_SaveDataFlap" Content="SAVE FLAP" Command="{Binding cmdToggleSaveFlap}" HorizontalAlignment="Left" Margin="0,9,0,0" VerticalAlignment="Top" Width="96" Height="48" Grid.Column="1"/>
+                    <Button x:Name="btn_LoadData" Content="LOAD FLAP" Command="{Binding cmdToggleLoad}" HorizontalAlignment="Left" Margin="0,9,0,0" VerticalAlignment="Top" Width="96" Height="48" Grid.Column="2"/>
+                    <Button x:Name="btn_Reset" Content="RESET ALL" Command="{Binding cmdToggleReset}" HorizontalAlignment="Left" Margin="0,9,0,0" VerticalAlignment="Top" Width="96" Height="48" Grid.Column="3"/>
+                    <Button x:Name="btn_ResetFlap" Content="RESET FLAP" Command="{Binding cmdToggleResetFlap}" HorizontalAlignment="Left" Margin="0,9,0,0" VerticalAlignment="Top" Width="95" Height="48" Grid.Column="4"/>
+                    <Button x:Name="btn_PolarCurve" Content="POLAR CURVE" Command="{Binding cmdToggleAverageFlapResult}" HorizontalAlignment="Left" Margin="100,9,0,0" VerticalAlignment="Top" Width="95" Height="35" Grid.Column="5"/>
+                    <CheckBox x:Name="HidePoints" Click="hide_points_changed" HorizontalAlignment="Left"  Margin="100,45,0,0" VerticalAlignment="Top"  Grid.Column="5">Hide points</CheckBox>
+                    <StackPanel Grid.Column="5" Margin="200,0,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Resolution</TextBlock>
+                        <ComboBox Name="curveResolution" SelectionChanged="curveResolution_changed" HorizontalAlignment="left" Width="75" Height="26" Margin="0 10 10 10">
+                            <ComboBoxItem Tag="256">256</ComboBoxItem>
+                            <ComboBoxItem Tag="128">128</ComboBoxItem>
+                            <ComboBoxItem Tag="64">64</ComboBoxItem>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="5" Margin="300,0,0,0" HorizontalAlignment="Left">
+                        <TextBlock>Stall AoA</TextBlock>
+                        <TextBox Text="50" x:Name="stallBreakpoint" TextChanged="textChanged_double" LostFocus="stallBreakpoint_LostFocus"></TextBox>
+                    </StackPanel>
                 </Grid>
-                <Grid x:Name="captureLabels" Margin="30 10 0 0">
+                <TextBlock Name="LegendLabel" Margin="30 10 0 0" Width="100" HorizontalAlignment="Left" ></TextBlock>
+                <Grid x:Name="captureLabels" Margin="130 0 0 0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="25"></RowDefinition>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="140" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
@@ -110,7 +148,11 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                 </Grid>
-                <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="20 10 0 0"></Canvas>
+                <Canvas x:Name="captureCanvas" Width="950" Height="450" Margin="20 10 0 0">
+                    <Canvas.LayoutTransform>
+                        <ScaleTransform ScaleY="1" ScaleX="1" />
+                    </Canvas.LayoutTransform>
+                </Canvas>
             </StackPanel>
         </TabItem>
         <TabItem Header="SimVars">

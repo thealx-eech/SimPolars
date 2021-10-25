@@ -3,5 +3,13 @@
   "airspeed_min_kph": 48.0,
   "airspeed_max_kph": 221.0,
   "sink_min_ms": -0.4,
-  "sink_max_ms": 3.78
+  "sink_max_ms": 3.78,
+  "speed_measurement": 1,
+  "precision": 0.25,
+  "horizontalFlight": "false",
+  "resultAveraging": "false",
+  "curveResolution": 512,
+  "stallBreakpoint": 40.0,
+  "forceHorizontalFlight": 1,
+  "hidePoints": 1
 }
